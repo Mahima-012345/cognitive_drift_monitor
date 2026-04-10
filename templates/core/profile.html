@@ -1,0 +1,186 @@
+{% extends 'base.html' %}
+
+{% block title %}Profile Settings - Cognitive Drift Detection{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <div class="col-lg-3 mb-4">
+            <!-- Profile Sidebar -->
+            <div class="card">
+                <div class="card-body text-center">
+                    <div class="mb-3">
+                        <i class="fas fa-user-circle fa-5x text-primary"></i>
+                    </div>
+                    <h5>{{ user.username }}</h5>
+                    <p class="text-muted mb-1">{{ profile.full_name|default:"No name set" }}</p>
+                    <small class="text-muted">{{ user.email }}</small>
+                    <hr>
+                    <p class="small text-muted mb-1">
+                        Member since: {{ user.date_joined|date:"M d, Y" }}
+                    </p>
+                    <p class="small text-muted mb-0">
+                        Last login: {{ user.last_login|date:"M d, Y H:i" }}
+                    </p>
+                </div>
+            </div>
+            
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h6 class="card-title">Quick Stats</h6>
+                    <ul class="list-unstyled small">
+                        <li class="mb-2">
+                            <i class="fas fa-clock me-2 text-primary"></i>
+                            Study: {{ profile.study_start_time|default:"--:--" }} - {{ profile.study_end_time|default:"--:--" }}
+                        </li>
+                        <li class="mb-2">
+                            <i class="fas fa-bullseye me-2 text-success"></i>
+                            Goal: {{ profile.daily_goal|default:"Not set"|truncatechars:30 }}
+                        </li>
+                        <li>
+                            <i class="fas fa-bell me-2 text-warning"></i>
+                            Warnings: {{ profile.warning_enabled|yesno:"Enabled,Disabled" }}
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-9">
+            <!-- Settings Form -->
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h4 class="mb-0">
+                        <i class="fas fa-user-cog me-2 text-primary"></i>
+                        Profile Settings
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        {% csrf_token %}
+                        
+                        <!-- Basic Info -->
+                        <h5 class="border-bottom pb-2 mb-3">
+                            <i class="fas fa-user me-2"></i>Basic Information
+                        </h5>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="id_full_name" class="form-label">Full Name</label>
+                                {{ form.full_name }}
+                                {% if form.full_name.errors %}
+                                    <div class="text-danger small">{{ form.full_name.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="id_age" class="form-label">Age</label>
+                                {{ form.age }}
+                                {% if form.age.errors %}
+                                    <div class="text-danger small">{{ form.age.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <!-- Study Schedule -->
+                        <h5 class="border-bottom pb-2 mb-3 mt-4">
+                            <i class="fas fa-calendar-alt me-2"></i>Study Schedule
+                        </h5>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="id_study_start_time" class="form-label">Study Start Time</label>
+                                {{ form.study_start_time }}
+                                {% if form.study_start_time.errors %}
+                                    <div class="text-danger small">{{ form.study_start_time.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="id_study_end_time" class="form-label">Study End Time</label>
+                                {{ form.study_end_time }}
+                                {% if form.study_end_time.errors %}
+                                    <div class="text-danger small">{{ form.study_end_time.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="id_daily_goal" class="form-label">Daily Goal</label>
+                            {{ form.daily_goal }}
+                            <small class="form-text text-muted">e.g., Study 4 hours, Complete 3 chapters</small>
+                            {% if form.daily_goal.errors %}
+                                <div class="text-danger small">{{ form.daily_goal.errors.0 }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Pomodoro Settings -->
+                        <h5 class="border-bottom pb-2 mb-3 mt-4">
+                            <i class="fas fa-clock me-2"></i>Pomodoro Settings
+                        </h5>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                {{ form.pomodoro_enabled }}
+                                <label class="form-check-label" for="id_pomodoro_enabled">
+                                    Enable Pomodoro Timer
+                                </label>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="id_pomodoro_focus_minutes" class="form-label">Focus Duration (minutes)</label>
+                                {{ form.pomodoro_focus_minutes }}
+                                {% if form.pomodoro_focus_minutes.errors %}
+                                    <div class="text-danger small">{{ form.pomodoro_focus_minutes.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="id_pomodoro_break_minutes" class="form-label">Break Duration (minutes)</label>
+                                {{ form.pomodoro_break_minutes }}
+                                {% if form.pomodoro_break_minutes.errors %}
+                                    <div class="text-danger small">{{ form.pomodoro_break_minutes.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <!-- Distractions -->
+                        <h5 class="border-bottom pb-2 mb-3 mt-4">
+                            <i class="fas fa-ban me-2"></i>Common Distractions
+                        </h5>
+                        <div class="mb-3">
+                            <label for="id_distraction_list" class="form-label">Distraction List</label>
+                            {{ form.distraction_list }}
+                            <small class="form-text text-muted">Enter one distraction per line</small>
+                            {% if form.distraction_list.errors %}
+                                <div class="text-danger small">{{ form.distraction_list.errors.0 }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Warnings -->
+                        <h5 class="border-bottom pb-2 mb-3 mt-4">
+                            <i class="fas fa-bell me-2"></i>Warning Settings
+                        </h5>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                {{ form.warning_enabled }}
+                                <label class="form-check-label" for="id_warning_enabled">
+                                    Enable Drift Warnings
+                                </label>
+                            </div>
+                            <small class="form-text text-muted">
+                                Receive alerts when cognitive drift is detected
+                            </small>
+                        </div>
+                        
+                        <hr>
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'dashboard' %}" class="btn btn-secondary">
+                                <i class="fas fa-arrow-left me-2"></i>Back to Dashboard
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save me-2"></i>Save Changes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

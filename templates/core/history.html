@@ -1,0 +1,421 @@
+{% extends 'base.html' %}
+
+{% block title %}History - Cognitive Drift Detection{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <h2 class="mb-4">
+        <i class="fas fa-history me-2 text-primary"></i>
+        Records History
+    </h2>
+
+    <!-- Tab Navigation -->
+    <ul class="nav nav-tabs mb-4" id="historyTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="drift-tab" data-bs-toggle="tab" data-bs-target="#drift" type="button">
+                <i class="fas fa-brain me-1"></i>Drift Records
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="reaction-tab" data-bs-toggle="tab" data-bs-target="#reaction" type="button">
+                <i class="fas fa-stopwatch me-1"></i>Reaction Tests
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="eye-tab" data-bs-toggle="tab" data-bs-target="#eye" type="button">
+                <i class="fas fa-eye me-1"></i>Eye Tracking
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="hrv-tab" data-bs-toggle="tab" data-bs-target="#hrv" type="button">
+                <i class="fas fa-heartbeat me-1"></i>HRV Data
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="warning-tab" data-bs-toggle="tab" data-bs-target="#warning" type="button">
+                <i class="fas fa-exclamation-triangle me-1"></i>Warnings
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="other-tab" data-bs-toggle="tab" data-bs-target="#other" type="button">
+                <i class="fas fa-ellipsis-h me-1"></i>More
+            </button>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content" id="historyTabsContent">
+        <!-- Drift Records -->
+        <div class="tab-pane fade show active" id="drift" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">Cognitive Drift Analysis Records</h5>
+                </div>
+                <div class="card-body p-0">
+                    {% if drift_records %}
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Final Score</th>
+                                        <th>Reaction</th>
+                                        <th>Eye</th>
+                                        <th>HRV</th>
+                                        <th>State</th>
+                                        <th>Warning</th>
+                                        <th>Confidence</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for record in drift_records %}
+                                        <tr>
+                                            <td>{{ record.timestamp|date:"M d, Y H:i:s" }}</td>
+                                            <td>
+                                                <span class="badge bg-{% if record.final_score < 30 %}success{% elif record.final_score < 60 %}warning{% else %}danger{% endif %}">
+                                                    {{ record.final_score|default:"--"|stringformat:"%.1f" }}
+                                                </span>
+                                            </td>
+                                            <td>{{ record.reaction_score|default:"--"|stringformat:"%.1f" }}</td>
+                                            <td>{{ record.eye_score|default:"--"|stringformat:"%.1f" }}</td>
+                                            <td>{{ record.hrv_score|default:"--"|stringformat:"%.1f" }}</td>
+                                            <td>
+                                                <span class="badge bg-{% if record.cognitive_state == 'focused' %}success{% elif record.cognitive_state == 'mild_drift' %}warning{% else %}danger{% endif %}">
+                                                    {{ record.get_cognitive_state_display }}
+                                                </span>
+                                            </td>
+                                            <td>{{ record.get_warning_level_display|default:"-" }}</td>
+                                            <td>{{ record.confidence_score|default:"--"|stringformat:"%.2f" }}</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5 text-muted">
+                            <i class="fas fa-brain fa-3x mb-3"></i>
+                            <p>No drift records found. Start monitoring to see data here.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Reaction Tests -->
+        <div class="tab-pane fade" id="reaction" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">Reaction Time Test Sessions</h5>
+                </div>
+                <div class="card-body p-0">
+                    {% if reaction_records %}
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Mean RT</th>
+                                        <th>Std RT</th>
+                                        <th>Variability</th>
+                                        <th>Z-Score</th>
+                                        <th>Accuracy</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for record in reaction_records %}
+                                        <tr>
+                                            <td>{{ record.timestamp|date:"M d, Y H:i" }}</td>
+                                            <td>{{ record.mean_rt|floatformat:1 }}ms</td>
+                                            <td>{{ record.std_rt|floatformat:1 }}ms</td>
+                                            <td>{{ record.variability|floatformat:2 }}</td>
+                                            <td>{{ record.z_score|floatformat:2 }}</td>
+                                            <td>{{ record.accuracy|floatformat:1 }}%</td>
+                                            <td>
+                                                <span class="badge bg-{% if record.drift_status == 'stable' %}success{% elif record.drift_status == 'warning' %}warning{% else %}danger{% endif %}">
+                                                    {{ record.get_drift_status_display }}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5 text-muted">
+                            <i class="fas fa-stopwatch fa-3x mb-3"></i>
+                            <p>No reaction test records found.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Eye Tracking -->
+        <div class="tab-pane fade" id="eye" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">Eye Tracking Records</h5>
+                </div>
+                <div class="card-body p-0">
+                    {% if eye_records %}
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Blink Rate</th>
+                                        <th>Blink Duration</th>
+                                        <th>Eye State</th>
+                                        <th>Eye Score</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for record in eye_records %}
+                                        <tr>
+                                            <td>{{ record.timestamp|date:"M d, Y H:i" }}</td>
+                                            <td>{{ record.blink_rate|floatformat:1 }}/min</td>
+                                            <td>{{ record.blink_duration|floatformat:0 }}ms</td>
+                                            <td>
+                                                <span class="badge bg-{% if record.eye_state == 'open' %}success{% elif record.eye_state == 'closed' %}info{% elif record.eye_state == 'drowsy' %}warning{% else %}danger{% endif %}">
+                                                    {{ record.get_eye_state_display }}
+                                                </span>
+                                            </td>
+                                            <td>{{ record.eye_score|floatformat:1 }}</td>
+                                            <td>{{ record.notes|default:"--"|truncatechars:30 }}</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5 text-muted">
+                            <i class="fas fa-eye fa-3x mb-3"></i>
+                            <p>No eye tracking records found.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- HRV Data -->
+        <div class="tab-pane fade" id="hrv" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">Heart Rate Variability Records</h5>
+                </div>
+                <div class="card-body p-0">
+                    {% if hrv_records %}
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>BPM</th>
+                                        <th>SDNN</th>
+                                        <th>Stress Level</th>
+                                        <th>HRV Score</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for record in hrv_records %}
+                                        <tr>
+                                            <td>{{ record.timestamp|date:"M d, Y H:i" }}</td>
+                                            <td>{{ record.bpm|floatformat:0 }}</td>
+                                            <td>{{ record.sdnn|floatformat:1 }}ms</td>
+                                            <td>
+                                                <span class="badge bg-{% if record.stress_level == 'relaxed' %}success{% elif record.stress_level == 'normal' %}info{% elif record.stress_level == 'mild_stress' %}warning{% else %}danger{% endif %}">
+                                                    {{ record.get_stress_level_display }}
+                                                </span>
+                                            </td>
+                                            <td>{{ record.hrv_score|floatformat:1 }}</td>
+                                            <td>{{ record.notes|default:"--"|truncatechars:30 }}</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5 text-muted">
+                            <i class="fas fa-heartbeat fa-3x mb-3"></i>
+                            <p>No HRV records found.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Warnings -->
+        <div class="tab-pane fade" id="warning" role="tabpanel">
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">Warning Logs</h5>
+                </div>
+                <div class="card-body p-0">
+                    {% if warning_records %}
+                        <div class="list-group list-group-flush">
+                            {% for warning in warning_records %}
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <span class="badge bg-{{ warning.warning_level }} me-2">
+                                                {{ warning.get_warning_level_display }}
+                                            </span>
+                                            <small class="text-muted">({{ warning.get_trigger_source_display }})</small>
+                                            <p class="mb-0 mt-1">{{ warning.warning_message }}</p>
+                                            <small class="text-muted">{{ warning.timestamp|date:"M d, Y H:i:s" }}</small>
+                                        </div>
+                                        {% if warning.acknowledged %}
+                                            <span class="badge bg-success">
+                                                <i class="fas fa-check"></i> Acknowledged
+                                            </span>
+                                        {% else %}
+                                            <button class="btn btn-sm btn-outline-success acknowledge-btn" 
+                                                    data-warning-id="{{ warning.id }}">
+                                                <i class="fas fa-check"></i> Acknowledge
+                                            </button>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5 text-muted">
+                            <i class="fas fa-check-circle fa-3x mb-3 text-success"></i>
+                            <p>No warnings recorded. Great job staying focused!</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- More (Goals, Pomodoro, Distractions) -->
+        <div class="tab-pane fade" id="other" role="tabpanel">
+            <div class="row g-4">
+                <!-- Goals -->
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-header bg-white">
+                            <h5 class="mb-0"><i class="fas fa-bullseye me-2 text-success"></i>Goals</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            {% if goal_records %}
+                                <ul class="list-group list-group-flush">
+                                    {% for goal in goal_records %}
+                                        <li class="list-group-item">
+                                            <div class="d-flex justify-content-between">
+                                                <strong>{{ goal.goal_title }}</strong>
+                                                <span class="badge bg-{% if goal.completion_percent >= 100 %}success{% else %}warning{% endif %}">
+                                                    {{ goal.completion_percent|floatformat:0 }}%
+                                                </span>
+                                            </div>
+                                            <small class="text-muted">{{ goal.date }}</small>
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <div class="text-center py-4 text-muted">
+                                    <p class="mb-0">No goal records</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pomodoro Sessions -->
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-header bg-white">
+                            <h5 class="mb-0"><i class="fas fa-clock me-2 text-primary"></i>Pomodoro</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            {% if pomodoro_records %}
+                                <ul class="list-group list-group-flush">
+                                    {% for session in pomodoro_records %}
+                                        <li class="list-group-item">
+                                            <div class="d-flex justify-content-between">
+                                                <span>{{ session.start_time|date:"M d H:i" }}</span>
+                                                {% if session.completed %}
+                                                    <span class="badge bg-success"><i class="fas fa-check"></i></span>
+                                                {% else %}
+                                                    <span class="badge bg-secondary"><i class="fas fa-times"></i></span>
+                                                {% endif %}
+                                            </div>
+                                            <small class="text-muted">{{ session.focus_minutes }}min focus</small>
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <div class="text-center py-4 text-muted">
+                                    <p class="mb-0">No pomodoro sessions</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Distractions -->
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-header bg-white">
+                            <h5 class="mb-0"><i class="fas fa-ban me-2 text-warning"></i>Distractions</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            {% if distraction_records %}
+                                <ul class="list-group list-group-flush">
+                                    {% for distraction in distraction_records %}
+                                        <li class="list-group-item">
+                                            <div class="d-flex justify-content-between">
+                                                <span>{{ distraction.distraction_name }}</span>
+                                                {% if distraction.blocked_during_focus %}
+                                                    <span class="badge bg-success">Blocked</span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">Not blocked</span>
+                                                {% endif %}
+                                            </div>
+                                            <small class="text-muted">{{ distraction.timestamp|date:"M d H:i" }}</small>
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <div class="text-center py-4 text-muted">
+                                    <p class="mb-0">No distractions recorded</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Acknowledge warning buttons
+    document.querySelectorAll('.acknowledge-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const warningId = this.dataset.warningId;
+            fetch(`/acknowledge-warning/${warningId}/`, {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    this.closest('.list-group-item').querySelector('.badge.bg-success, .btn-outline-success')?.remove();
+                    const span = document.createElement('span');
+                    span.className = 'badge bg-success';
+                    span.innerHTML = '<i class="fas fa-check"></i> Acknowledged';
+                    this.replaceWith(span);
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Home - Cognitive Drift Detection{% endblock %}
+
+{% block content %}
+<div class="hero-section bg-gradient text-white py-5">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-lg-7">
+                <h1 class="display-4 fw-bold mb-4">
+                    <i class="fas fa-brain me-3"></i>Cognitive Drift Detection
+                </h1>
+                <p class="lead mb-4">
+                    Monitor your mental focus in real-time using reaction time tests, 
+                    eye tracking, and physiological signals. Detect cognitive drift early 
+                    and stay productive.
+                </p>
+                <div class="d-flex gap-3 flex-wrap">
+                    {% if not user.is_authenticated %}
+                        <a href="{% url 'signup' %}" class="btn btn-light btn-lg">
+                            <i class="fas fa-rocket me-2"></i>Get Started
+                        </a>
+                        <a href="{% url 'login' %}" class="btn btn-outline-light btn-lg">
+                            <i class="fas fa-sign-in-alt me-2"></i>Login
+                        </a>
+                    {% else %}
+                        <a href="{% url 'dashboard' %}" class="btn btn-light btn-lg">
+                            <i class="fas fa-chart-line me-2"></i>Go to Dashboard
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-lg-5 text-center">
+                <div class="hero-illustration">
+                    <i class="fas fa-brain fa-10x opacity-75"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container py-5">
+    <!-- Features Section -->
+    <h2 class="text-center mb-5">
+        <i class="fas fa-cogs me-2 text-primary"></i>System Features
+    </h2>
+    
+    <div class="row g-4">
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body text-center">
+                    <div class="feature-icon bg-danger bg-opacity-10 text-danger mb-3">
+                        <i class="fas fa-stopwatch fa-2x"></i>
+                    </div>
+                    <h5 class="card-title">Reaction Time Tests</h5>
+                    <p class="card-text text-muted">
+                        Measure cognitive alertness through interactive reaction time tests. 
+                        Track your response speeds and variability over time.
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body text-center">
+                    <div class="feature-icon bg-primary bg-opacity-10 text-primary mb-3">
+                        <i class="fas fa-eye fa-2x"></i>
+                    </div>
+                    <h5 class="card-title">Eye Tracking</h5>
+                    <p class="card-text text-muted">
+                        Monitor blink patterns and eye states using computer vision. 
+                        Detect drowsiness and looking-away patterns.
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card h-100 feature-card">
+                <div class="card-body text-center">
+                    <div class="feature-icon bg-success bg-opacity-10 text-success mb-3">
+                        <i class="fas fa-heartbeat fa-2x"></i>
+                    </div>
+                    <h5 class="card-title">HRV Monitoring</h5>
+                    <p class="card-text text-muted">
+                        Track heart rate variability for stress and cognitive load analysis. 
+                        Understand your body's response to mental demands.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- How It Works -->
+    <div class="row mt-5">
+        <div class="col-12">
+            <h2 class="text-center mb-5">
+                <i class="fas fa-question-circle me-2 text-primary"></i>How It Works
+            </h2>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center step-card">
+                <div class="step-number bg-primary text-white">1</div>
+                <h5>Sign Up</h5>
+                <p class="text-muted small">Create your personal account</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center step-card">
+                <div class="step-number bg-primary text-white">2</div>
+                <h5>Configure</h5>
+                <p class="text-muted small">Set your study preferences</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center step-card">
+                <div class="step-number bg-primary text-white">3</div>
+                <h5>Monitor</h5>
+                <p class="text-muted small">Run cognitive tests</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center step-card">
+                <div class="step-number bg-primary text-white">4</div>
+                <h5>Analyze</h5>
+                <p class="text-muted small">View your drift patterns</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tech Stack -->
+    <div class="row mt-5">
+        <div class="col-12">
+            <h2 class="text-center mb-4">
+                <i class="fas fa-layer-group me-2 text-primary"></i>Technology Stack
+            </h2>
+            <div class="d-flex justify-content-center gap-4 flex-wrap tech-badges">
+                <span class="badge bg-dark p-2"><i class="fab fa-python me-1"></i>Django</span>
+                <span class="badge bg-dark p-2"><i class="fas fa-database me-1"></i>SQLite</span>
+                <span class="badge bg-dark p-2"><i class="fab fa-bootstrap me-1"></i>Bootstrap</span>
+                <span class="badge bg-dark p-2"><i class="fas fa-chart-line me-1"></i>Chart.js</span>
+                <span class="badge bg-dark p-2"><i class="fas fa-brain me-1"></i>ML Ready</span>
+                <span class="badge bg-dark p-2"><i class="fas fa-camera me-1"></i>CV Ready</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- CTA Section -->
+    {% if not user.is_authenticated %}
+    <div class="row mt-5">
+        <div class="col-12">
+            <div class="cta-section text-center py-5 bg-primary bg-opacity-10 rounded-3">
+                <h3 class="mb-3">Ready to Monitor Your Focus?</h3>
+                <p class="text-muted mb-4">Join now and start tracking your cognitive performance</p>
+                <a href="{% url 'signup' %}" class="btn btn-primary btn-lg">
+                    <i class="fas fa-user-plus me-2"></i>Create Free Account
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

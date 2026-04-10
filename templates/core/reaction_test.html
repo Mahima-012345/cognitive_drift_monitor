@@ -1,0 +1,716 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Reaction Test - Cognitive Drift Detection{% endblock %}
+
+{% block extra_css %}
+<style>
+    .test-container {
+        max-width: 700px;
+        margin: 0 auto;
+    }
+    
+    .stimulus-area {
+        width: 300px;
+        height: 300px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 1.5rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        margin: 2rem auto;
+        user-select: none;
+    }
+    
+    .stimulus-idle {
+        background-color: #6c757d;
+        color: white;
+        box-shadow: 0 10px 40px rgba(108, 117, 125, 0.3);
+    }
+    
+    .stimulus-waiting {
+        background-color: #0dcaf0;
+        color: white;
+        box-shadow: 0 10px 40px rgba(13, 202, 240, 0.3);
+    }
+    
+    .stimulus-visible {
+        background-color: #28a745;
+        color: white;
+        box-shadow: 0 10px 40px rgba(40, 167, 69, 0.4);
+        animation: pulse-green 0.5s ease-in-out;
+    }
+    
+    .stimulus-clicked {
+        background-color: #dc3545;
+        color: white;
+    }
+    
+    .stimulus-finished {
+        background-color: #0d6efd;
+        color: white;
+    }
+    
+    @keyframes pulse-green {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+    }
+    
+    .stats-card {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    .rt-display {
+        font-size: 3rem;
+        font-weight: bold;
+        font-family: monospace;
+    }
+    
+    .rt-good { color: #28a745; }
+    .rt-normal { color: #0d6efd; }
+    .rt-slow { color: #ffc107; }
+    .rt-flagged { color: #dc3545; }
+    
+    .baseline-badge {
+        font-size: 0.9rem;
+    }
+    
+    .progress-bar-custom {
+        height: 8px;
+        border-radius: 4px;
+    }
+    
+    .session-list {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    
+    #results-area {
+        display: none;
+    }
+    
+    .chart-container {
+        height: 250px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="test-container">
+        <!-- Header with Baseline Status -->
+        <div class="text-center mb-4">
+            <h2>
+                <i class="fas fa-stopwatch me-2 text-danger"></i>
+                Reaction Time Test
+            </h2>
+            
+            {% if baseline_established %}
+                <div class="alert alert-success baseline-badge">
+                    <i class="fas fa-check-circle me-1"></i>
+                    Baseline Established: {{ baseline_mean }} ms average
+                </div>
+            {% else %}
+                <div class="alert alert-info baseline-badge">
+                    <i class="fas fa-info-circle me-1"></i>
+                    Building Baseline ({{ baseline_session_count }}/3 sessions)
+                    <small class="d-block">{{ sessions_needed }} more sessions needed</small>
+                </div>
+            {% endif %}
+        </div>
+        
+        <!-- Instructions Card -->
+        <div class="card mb-4" id="instructions-card">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="fas fa-book me-2"></i>Instructions
+                </h5>
+                <ol class="mb-3">
+                    <li>Click <strong>"Start Test"</strong> when ready</li>
+                    <li>Wait for the circle to turn <span class="text-success">GREEN</span></li>
+                    <li>Click as <strong>quickly as possible</strong> when it turns green</li>
+                    <li>Complete <strong>20 valid trials</strong> (false starts don't count)</li>
+                </ol>
+                <div class="alert alert-warning mb-0">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    <strong>Important:</strong> Clicking before the green circle appears counts as a false start!
+                </div>
+            </div>
+        </div>
+        
+        <!-- Test Area -->
+        <div class="card mb-4">
+            <div class="card-body text-center">
+                <!-- Progress -->
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between small text-muted mb-1">
+                        <span>Progress</span>
+                        <span id="progress-text">0 / 20 valid trials</span>
+                    </div>
+                    <div class="progress progress-bar-custom">
+                        <div class="progress-bar bg-primary" id="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </div>
+                
+                <!-- Stimulus Circle -->
+                <div class="stimulus-area stimulus-idle" id="stimulus">
+                    <span id="stimulus-text">Click to Start</span>
+                </div>
+                
+                <!-- Trial Feedback -->
+                <div id="feedback-area" class="mt-3" style="min-height: 80px;">
+                    <p class="text-muted" id="feedback-text">Click the circle above to begin</p>
+                </div>
+                
+                <!-- Controls -->
+                <div class="mt-3">
+                    <button class="btn btn-primary btn-lg" id="start-btn">
+                        <i class="fas fa-play me-2"></i>Start Test
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Results Area (Hidden initially) -->
+        <div class="card mb-4" id="results-area">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-bar me-2"></i>Session Results
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 text-center mb-3">
+                        <h6 class="text-muted">Mean RT</h6>
+                        <div class="rt-display" id="result-mean">--</div>
+                        <small class="text-muted">milliseconds</small>
+                    </div>
+                    <div class="col-md-4 text-center mb-3">
+                        <h6 class="text-muted">Variability</h6>
+                        <div class="rt-display" id="result-variability">--</div>
+                        <small class="text-muted">CV score</small>
+                    </div>
+                    <div class="col-md-4 text-center mb-3">
+                        <h6 class="text-muted">Drift Level</h6>
+                        <div class="rt-display" id="result-drift">--</div>
+                        <small class="text-muted" id="result-drift-sub">--</small>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div class="row text-center small">
+                    <div class="col-4">
+                        <div class="text-success" id="result-valid">--</div>
+                        <div>Valid Trials</div>
+                    </div>
+                    <div class="col-4">
+                        <div class="text-danger" id="result-false">--</div>
+                        <div>False Starts</div>
+                    </div>
+                    <div class="col-4">
+                        <div class="text-warning" id="result-anticipations">--</div>
+                        <div>Anticipations</div>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div id="baseline-comparison" class="alert" style="display: none;">
+                    <strong>Baseline Comparison:</strong>
+                    <span id="baseline-change">--</span>
+                    <span class="text-muted d-block small" id="baseline-note"></span>
+                </div>
+                
+                <div id="confidence-area" class="alert alert-info">
+                    <strong>Confidence:</strong> <span id="result-confidence">--</span>
+                    <p class="mb-0 small" id="confidence-note"></p>
+                </div>
+                
+                <div class="d-flex gap-2 mt-3">
+                    <button class="btn btn-primary flex-grow-1" id="save-btn" style="display: none;">
+                        <i class="fas fa-save me-2"></i>Save Session
+                    </button>
+                    <button class="btn btn-outline-secondary" id="retry-btn">
+                        <i class="fas fa-redo me-2"></i>Try Again
+                    </button>
+                    <a href="{% url 'dashboard' %}" class="btn btn-outline-primary">
+                        <i class="fas fa-home me-2"></i>Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Recent Sessions -->
+        {% if recent_sessions %}
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-history me-2"></i>Recent Sessions
+                </h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive session-list">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Mean RT</th>
+                                <th>Valid</th>
+                                <th>Drift Level</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for session in recent_sessions %}
+                            <tr>
+                                <td>{{ session.timestamp|date:"M d, H:i" }}</td>
+                                <td>{{ session.mean_rt|floatformat:0 }} ms</td>
+                                <td>{{ session.valid_trials }}</td>
+                                <td>
+                                    <span class="badge bg-{% if session.drift_level == 'stable' %}success{% elif session.drift_level == 'mild_drift' %}warning{% elif session.drift_level == 'moderate_drift' %}orange{% else %}danger{% endif %}">
+                                        {{ session.get_drift_level_display }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Reaction Time Trend Chart -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-line me-2"></i>Your Reaction Time Trend
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="reactionChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% csrf_token %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const ReactionTest = {
+    // Configuration
+    config: {
+        requiredValidTrials: 20,
+        minDelay: 1500,
+        maxDelay: 3500,
+        anticipationThreshold: 100,
+        validRTMin: 100,
+        validRTMax: 1200,
+    },
+    
+    // State
+    state: 'idle',
+    stimulusAppearTime: null,
+    waitTimeout: null,
+    validTrials: 0,
+    totalTrials: 0,
+    falseStarts: 0,
+    anticipations: 0,
+    rawTimes: [],
+    cleanTimes: [],
+    latestRT: null,
+    clickRecorded: false,
+    
+    // DOM Elements
+    stimulus: null,
+    stimulusText: null,
+    startBtn: null,
+    feedbackText: null,
+    progressBar: null,
+    progressText: null,
+    
+    init() {
+        this.stimulus = document.getElementById('stimulus');
+        this.stimulusText = document.getElementById('stimulus-text');
+        this.startBtn = document.getElementById('start-btn');
+        this.feedbackText = document.getElementById('feedback-text');
+        this.progressBar = document.getElementById('progress-bar');
+        this.progressText = document.getElementById('progress-text');
+        
+        this.bindEvents();
+        this.loadChart();
+    },
+    
+    bindEvents() {
+        this.stimulus.addEventListener('click', (e) => this.handleStimulusClick(e));
+        this.startBtn.addEventListener('click', () => this.startTest());
+        document.getElementById('retry-btn').addEventListener('click', () => this.resetTest());
+        document.getElementById('save-btn').addEventListener('click', () => this.saveSession());
+    },
+    
+    startTest() {
+        this.state = 'waiting';
+        this.startBtn.style.display = 'none';
+        document.getElementById('instructions-card').style.display = 'none';
+        this.setStimulus('waiting', 'Get Ready...');
+        this.scheduleStimulus();
+    },
+    
+    scheduleStimulus() {
+        const delay = this.config.minDelay + Math.random() * (this.config.maxDelay - this.config.minDelay);
+        
+        this.waitTimeout = setTimeout(() => {
+            this.showStimulus();
+        }, delay);
+    },
+    
+    showStimulus() {
+        this.state = 'stimulus_visible';
+        this.stimulusAppearTime = performance.now();
+        this.clickRecorded = false;
+        this.setStimulus('visible', 'CLICK!');
+    },
+    
+    handleStimulusClick(e) {
+        e.preventDefault();
+        
+        if (this.state === 'idle') {
+            this.startTest();
+            return;
+        }
+        
+        if (this.clickRecorded) return;
+        
+        if (this.state === 'waiting') {
+            // False start!
+            this.clickRecorded = true;
+            this.falseStarts++;
+            this.totalTrials++;
+            this.showFeedback('False Start! Wait for green.', 'danger');
+            this.updateProgress();
+            
+            clearTimeout(this.waitTimeout);
+            
+            setTimeout(() => {
+                this.state = 'waiting';
+                this.clickRecorded = false;
+                this.setStimulus('waiting', 'Get Ready...');
+                this.scheduleStimulus();
+            }, 1500);
+            return;
+        }
+        
+        if (this.state === 'stimulus_visible') {
+            this.clickRecorded = true;
+            const rt = performance.now() - this.stimulusAppearTime;
+            this.latestRT = rt;
+            this.totalTrials++;
+            this.rawTimes.push(Math.round(rt));
+            
+            if (rt < this.config.anticipationThreshold) {
+                // Anticipation
+                this.anticipations++;
+                this.showFeedback(`Anticipation: ${Math.round(rt)}ms (too fast!)`, 'warning');
+            } else if (rt > this.config.validRTMax) {
+                // Too slow - still count as trial but flag it
+                this.validTrials++;
+                this.cleanTimes.push(Math.round(rt));
+                this.showFeedback(`Too slow: ${Math.round(rt)}ms`, 'info');
+            } else {
+                // Valid trial
+                this.validTrials++;
+                this.cleanTimes.push(Math.round(rt));
+                
+                if (rt < 250) {
+                    this.showFeedback(`Excellent! ${Math.round(rt)}ms`, 'success');
+                } else if (rt < 350) {
+                    this.showFeedback(`Good! ${Math.round(rt)}ms`, 'success');
+                } else if (rt < 500) {
+                    this.showFeedback(`${Math.round(rt)}ms`, 'primary');
+                } else {
+                    this.showFeedback(`${Math.round(rt)}ms`, 'secondary');
+                }
+            }
+            
+            this.updateProgress();
+            
+            if (this.validTrials >= this.config.requiredValidTrials) {
+                this.finishTest();
+            } else {
+                setTimeout(() => {
+                    this.state = 'waiting';
+                    this.clickRecorded = false;
+                    this.setStimulus('waiting', 'Get Ready...');
+                    this.scheduleStimulus();
+                }, 1000);
+            }
+        }
+    },
+    
+    setStimulus(className, text) {
+        this.stimulus.className = 'stimulus-area stimulus-' + className;
+        this.stimulusText.textContent = text;
+    },
+    
+    showFeedback(message, type) {
+        const colors = {
+            'success': '#28a745',
+            'danger': '#dc3545',
+            'warning': '#ffc107',
+            'info': '#0dcaf0',
+            'primary': '#0d6efd',
+            'secondary': '#6c757d'
+        };
+        
+        this.feedbackText.innerHTML = `<span style="color: ${colors[type]}; font-weight: bold;">${message}</span>`;
+    },
+    
+    updateProgress() {
+        const percent = (this.validTrials / this.config.requiredValidTrials) * 100;
+        this.progressBar.style.width = percent + '%';
+        this.progressText.textContent = `${this.validTrials} / ${this.config.requiredValidTrials} valid trials`;
+    },
+    
+    finishTest() {
+        this.state = 'finished';
+        clearTimeout(this.waitTimeout);
+        
+        this.setStimulus('finished', 'Complete!');
+        this.showFeedback(`Test Complete! ${this.validTrials} valid trials.`, 'primary');
+        
+        this.calculateAndShowResults();
+    },
+    
+    calculateAndShowResults() {
+        const mean = this.cleanTimes.reduce((a, b) => a + b, 0) / this.cleanTimes.length;
+        const stdDev = Math.sqrt(
+            this.cleanTimes.reduce((sq, n) => sq + Math.pow(n - mean, 2), 0) / this.cleanTimes.length
+        );
+        const variability = stdDev / mean;
+        
+        document.getElementById('result-mean').textContent = Math.round(mean);
+        document.getElementById('result-mean').className = 'rt-display ' + this.getRTClass(mean);
+        
+        document.getElementById('result-variability').textContent = variability.toFixed(3);
+        document.getElementById('result-variability').className = 'rt-display ' + (variability > 0.2 ? 'rt-slow' : 'rt-normal');
+        
+        document.getElementById('result-valid').textContent = this.validTrials;
+        document.getElementById('result-false').textContent = this.falseStarts;
+        document.getElementById('result-anticipations').textContent = this.anticipations;
+        
+        // Get baseline info from server
+        this.fetchBaselineComparison(mean, variability);
+        
+        document.getElementById('results-area').style.display = 'block';
+        document.getElementById('save-btn').style.display = 'inline-block';
+        
+        document.getElementById('results-area').scrollIntoView({ behavior: 'smooth' });
+    },
+    
+    async fetchBaselineComparison(mean, variability) {
+        try {
+            const response = await fetch('/api/reaction-baseline/');
+            const data = await response.json();
+            
+            if (data.baseline.baseline_mean) {
+                const pctChange = ((mean - data.baseline.baseline_mean) / data.baseline.baseline_mean) * 100;
+                
+                document.getElementById('baseline-comparison').style.display = 'block';
+                document.getElementById('baseline-change').textContent = 
+                    `${pctChange >= 0 ? '+' : ''}${pctChange.toFixed(1)}% from baseline`;
+                
+                let driftLevel, driftClass;
+                if (Math.abs(pctChange) <= 5) {
+                    driftLevel = 'Stable';
+                    driftClass = 'alert-success';
+                } else if (pctChange <= 10) {
+                    driftLevel = 'Mild Drift';
+                    driftClass = 'alert-warning';
+                } else if (pctChange <= 15) {
+                    driftLevel = 'Moderate Drift';
+                    driftClass = 'alert-orange';
+                } else {
+                    driftLevel = 'Severe Drift';
+                    driftClass = 'alert-danger';
+                }
+                
+                document.getElementById('result-drift').textContent = driftLevel;
+                document.getElementById('result-drift').className = 'rt-display ' + this.getDriftClass(pctChange);
+                document.getElementById('result-drift-sub').textContent = `Baseline: ${Math.round(data.baseline.baseline_mean)}ms`;
+                
+                document.getElementById('baseline-comparison').className = 'alert ' + driftClass;
+            } else {
+                document.getElementById('result-drift').textContent = 'Baseline Building';
+                document.getElementById('result-drift').className = 'rt-display rt-normal';
+                document.getElementById('result-drift-sub').textContent = `${data.baseline.sessions_needed} more sessions needed`;
+            }
+            
+            // Calculate confidence
+            let confidence = 1.0;
+            const flaggedRate = (this.falseStarts + this.anticipations) / this.totalTrials;
+            
+            if (flaggedRate > 0.3) confidence -= 0.3;
+            else if (flaggedRate > 0.2) confidence -= 0.2;
+            else if (flaggedRate > 0.1) confidence -= 0.1;
+            
+            if (!data.baseline.established) {
+                confidence = Math.min(confidence, 0.5);
+                document.getElementById('confidence-note').textContent = 'Baseline not established yet';
+            } else {
+                document.getElementById('confidence-note').textContent = 'Session quality looks good';
+            }
+            
+            document.getElementById('result-confidence').textContent = (confidence * 100).toFixed(0) + '%';
+            
+        } catch (error) {
+            console.error('Error fetching baseline:', error);
+            document.getElementById('result-drift').textContent = 'N/A';
+        }
+    },
+    
+    getRTClass(rt) {
+        if (rt < 250) return 'rt-good';
+        if (rt < 350) return 'rt-normal';
+        if (rt < 500) return 'rt-slow';
+        return 'rt-slow';
+    },
+    
+    getDriftClass(pct) {
+        if (Math.abs(pct) <= 5) return 'rt-good';
+        if (pct <= 10) return 'rt-slow';
+        return 'rt-flagged';
+    },
+    
+    async saveSession() {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        const saveBtn = document.getElementById('save-btn');
+        
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="loading"></span> Saving...';
+        
+        try {
+            const mean = this.cleanTimes.reduce((a, b) => a + b, 0) / this.cleanTimes.length;
+            const stdDev = Math.sqrt(
+                this.cleanTimes.reduce((sq, n) => sq + Math.pow(n - mean, 2), 0) / this.cleanTimes.length
+            );
+            const variability = stdDev / mean;
+            
+            const response = await fetch('/api/save-reaction-session/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({
+                    raw_reaction_times: this.rawTimes,
+                    clean_reaction_times: this.cleanTimes,
+                    false_starts: this.falseStarts,
+                    anticipations: this.anticipations,
+                    valid_trials: this.validTrials,
+                    total_trials: this.totalTrials,
+                    notes: ''
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                saveBtn.innerHTML = '<i class="fas fa-check me-2"></i>Saved!';
+                saveBtn.className = 'btn btn-success flex-grow-1';
+                
+                setTimeout(() => {
+                    window.location.href = '{% url "dashboard" %}';
+                }, 1500);
+            } else {
+                alert('Error saving: ' + data.error);
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '<i class="fas fa-save me-2"></i>Save Session';
+            }
+        } catch (error) {
+            console.error('Save error:', error);
+            alert('Error saving session');
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="fas fa-save me-2"></i>Save Session';
+        }
+    },
+    
+    resetTest() {
+        this.state = 'idle';
+        clearTimeout(this.waitTimeout);
+        
+        this.validTrials = 0;
+        this.totalTrials = 0;
+        this.falseStarts = 0;
+        this.anticipations = 0;
+        this.rawTimes = [];
+        this.cleanTimes = [];
+        this.latestRT = null;
+        this.clickRecorded = false;
+        
+        this.setStimulus('idle', 'Click to Start');
+        this.showFeedback('Click the circle above to begin', 'secondary');
+        this.updateProgress();
+        
+        document.getElementById('results-area').style.display = 'none';
+        document.getElementById('instructions-card').style.display = 'block';
+        this.startBtn.style.display = 'inline-block';
+    },
+    
+    async loadChart() {
+        try {
+            const response = await fetch('/api/reaction-chart-data/?days=30');
+            const data = await response.json();
+            
+            const ctx = document.getElementById('reactionChart').getContext('2d');
+            
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels || [],
+                    datasets: data.datasets || []
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        title: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            title: {
+                                display: true,
+                                text: 'Reaction Time (ms)'
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Error loading chart:', error);
+        }
+    }
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    ReactionTest.init();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,466 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Dashboard - Cognitive Drift Detection{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stat-card {
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    .score-value {
+        font-size: 2.5rem;
+        font-weight: bold;
+    }
+    .score-good { color: #28a745; }
+    .score-warning { color: #ffc107; }
+    .score-danger { color: #dc3545; }
+    .state-badge {
+        font-size: 1.1rem;
+        padding: 0.5rem 1rem;
+    }
+    .warning-badge {
+        position: absolute;
+        top: -5px;
+        right: -5px;
+    }
+    .chart-container {
+        position: relative;
+        height: 300px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Welcome Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="welcome-card bg-gradient text-black p-4 rounded-3">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                    <div>
+                        <h2 class="mb-1">
+                            <i class="fas fa-chart-line me-2"></i>
+                            Welcome, {{ user.username }}!
+                        </h2>
+                        <p class="mb-0 opacity-75">
+                            {% if profile.full_name %}{{ profile.full_name }} | {% endif %}
+                            Last login: {{ user.last_login|date:"M d, Y H:i" }}
+                        </p>
+                    </div>
+                    <div class="text-end">
+                        <span class="state-badge badge 
+                            {% if latest_drift.cognitive_state == 'focused' %}bg-success
+                            {% elif latest_drift.cognitive_state == 'mild_drift' %}bg-warning
+                            {% elif latest_drift.cognitive_state == 'moderate_drift' %}bg-orange
+                            {% else %}bg-danger{% endif %}">
+                            {{ latest_drift.get_cognitive_state_display|default:"No Data" }}
+                        </span>
+                        {% if unacknowledged_warnings > 0 %}
+                        <span class="badge bg-danger warning-badge">
+                            <i class="fas fa-exclamation-triangle me-1"></i>{{ unacknowledged_warnings }} Warning{{ unacknowledged_warnings|pluralize }}
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Stats Cards -->
+    <div class="row g-4 mb-4">
+        <!-- Reaction Score -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="icon-box bg-danger bg-opacity-10 text-danger">
+                            <i class="fas fa-stopwatch"></i>
+                        </div>
+                        <small class="text-muted">Reaction</small>
+                    </div>
+                    <h6 class="text-muted mb-1">Reaction Score</h6>
+                    <div class="score-value 
+                        {% if latest_drift.reaction_score %}
+                            {% if latest_drift.reaction_score < 30 %}score-good
+                            {% elif latest_drift.reaction_score < 60 %}score-warning
+                            {% else %}score-danger{% endif %}
+                        {% endif %}">
+                        {{ latest_drift.reaction_score|default:"--"|stringformat:"%.1f" }}
+                    </div>
+                    <small class="text-muted">
+                        {% if latest_reaction %}Mean RT: {{ latest_reaction.mean_rt|floatformat:0 }}ms{% else %}No data{% endif %}
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Eye Score -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="icon-box bg-primary bg-opacity-10 text-primary">
+                            <i class="fas fa-eye"></i>
+                        </div>
+                        <small class="text-muted">Eye</small>
+                    </div>
+                    <h6 class="text-muted mb-1">Eye Score</h6>
+                    <div class="score-value 
+                        {% if latest_drift.eye_score %}
+                            {% if latest_drift.eye_score < 30 %}score-good
+                            {% elif latest_drift.eye_score < 60 %}score-warning
+                            {% else %}score-danger{% endif %}
+                        {% endif %}">
+                        {{ latest_drift.eye_score|default:"--"|stringformat:"%.1f" }}
+                    </div>
+                    <small class="text-muted">
+                        {% if latest_eye %}State: {{ latest_eye.get_eye_state_display }}{% else %}No data{% endif %}
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <!-- HRV Score -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="icon-box bg-success bg-opacity-10 text-success">
+                            <i class="fas fa-heartbeat"></i>
+                        </div>
+                        <small class="text-muted">HRV</small>
+                    </div>
+                    <h6 class="text-muted mb-1">HRV Score</h6>
+                    <div class="score-value 
+                        {% if latest_drift.hrv_score %}
+                            {% if latest_drift.hrv_score < 30 %}score-good
+                            {% elif latest_drift.hrv_score < 60 %}score-warning
+                            {% else %}score-danger{% endif %}
+                        {% endif %}">
+                        {{ latest_drift.hrv_score|default:"--"|stringformat:"%.1f" }}
+                    </div>
+                    <small class="text-muted">
+                        {% if latest_hrv %}BPM: {{ latest_hrv.bpm|floatformat:0 }}{% else %}No data{% endif %}
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Final Score -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="icon-box bg-info bg-opacity-10 text-info">
+                            <i class="fas fa-brain"></i>
+                        </div>
+                        <small class="text-muted">Overall</small>
+                    </div>
+                    <h6 class="text-muted mb-1">Final Drift Score</h6>
+                    <div class="score-value 
+                        {% if latest_drift.final_score %}
+                            {% if latest_drift.final_score < 30 %}score-good
+                            {% elif latest_drift.final_score < 60 %}score-warning
+                            {% else %}score-danger{% endif %}
+                        {% endif %}">
+                        {{ latest_drift.final_score|default:"--"|stringformat:"%.1f" }}
+                    </div>
+                    <small class="text-muted">
+                        {{ latest_drift.get_warning_level_display|default:"No warning"|title }}
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-chart-area me-2 text-primary"></i>
+                        Cognitive Drift Trend (Last 7 Days)
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="driftChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-cog me-2 text-primary"></i>
+                        Quick Settings
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">Pomodoro</label>
+                        <div class="d-flex align-items-center">
+                            <span class="me-2">
+                                {% if profile.pomodoro_enabled %}
+                                    <i class="fas fa-check-circle text-success"></i>
+                                {% else %}
+                                    <i class="fas fa-times-circle text-secondary"></i>
+                                {% endif %}
+                            </span>
+                            <span>{{ profile.pomodoro_focus_minutes }}min focus / {{ profile.pomodoro_break_minutes }}min break</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">Warnings</label>
+                        <div class="d-flex align-items-center">
+                            <span class="me-2">
+                                {% if profile.warning_enabled %}
+                                    <i class="fas fa-bell text-success"></i>
+                                {% else %}
+                                    <i class="fas fa-bell-slash text-secondary"></i>
+                                {% endif %}
+                            </span>
+                            <span>{% if profile.warning_enabled %}Enabled{% else %}Disabled{% endif %}</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">Daily Goal</label>
+                        <p class="mb-0">{{ profile.daily_goal|default:"Not set" }}</p>
+                    </div>
+                    <hr>
+                    <div class="row text-center">
+                        <div class="col-6">
+                            <div class="h4 mb-0 text-primary">{{ today_pomodoros }}</div>
+                            <small class="text-muted">Pomodoros Today</small>
+                        </div>
+                        <div class="col-6">
+                            <div class="h4 mb-0 text-warning">{{ today_distractions }}</div>
+                            <small class="text-muted">Distractions</small>
+                        </div>
+                    </div>
+                    <hr>
+                    <a href="{% url 'profile' %}" class="btn btn-outline-primary btn-sm w-100">
+                        <i class="fas fa-edit me-1"></i>Edit Settings
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Reaction Test Quick Action -->
+        <div class="col-lg-4">
+            <div class="card h-100 border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-stopwatch me-2"></i>
+                        Reaction Test
+                    </h5>
+                </div>
+                <div class="card-body text-center">
+                    {% if latest_reaction %}
+                        <div class="mb-3">
+                            <div class="h3 mb-0 text-danger">{{ latest_reaction.mean_rt|floatformat:0 }}</div>
+                            <small class="text-muted">ms (latest session)</small>
+                        </div>
+                        <div class="mb-3">
+                            {% if latest_reaction.get_drift_level_display %}
+                                <span class="badge bg-{% if latest_reaction.drift_level == 'stable' %}success{% elif latest_reaction.drift_level == 'mild_drift' %}warning{% elif latest_reaction.drift_level == 'moderate_drift' %}orange{% else %}danger{% endif %} p-2">
+                                    {{ latest_reaction.get_drift_level_display }}
+                                </span>
+                            {% endif %}
+                        </div>
+                    {% else %}
+                        <div class="mb-3">
+                            <i class="fas fa-brain fa-3x text-muted mb-2"></i>
+                            <p class="text-muted">No reaction tests yet</p>
+                        </div>
+                    {% endif %}
+                    
+                    <!-- Baseline Status -->
+                    {% if reaction_baseline_established %}
+                        <div class="alert alert-success py-2 mb-3">
+                            <small>
+                                <i class="fas fa-check-circle me-1"></i>
+                                Baseline: {{ reaction_baseline_mean|floatformat:0 }}ms
+                            </small>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info py-2 mb-3">
+                            <small>
+                                <i class="fas fa-info-circle me-1"></i>
+                                Building baseline ({{ reaction_baseline_count }}/3)
+                            </small>
+                        </div>
+                    {% endif %}
+                    
+                    <a href="{% url 'reaction_test' %}" class="btn btn-danger btn-lg w-100">
+                        <i class="fas fa-play me-2"></i>Start Test
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="row g-4 mb-4">
+        <!-- Recent Warnings -->
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-exclamation-triangle me-2 text-warning"></i>
+                        Recent Warnings
+                    </h5>
+                    <a href="{% url 'history' %}" class="btn btn-sm btn-link">View All</a>
+                </div>
+                <div class="card-body p-0">
+                    {% if recent_warnings %}
+                        <div class="list-group list-group-flush">
+                            {% for warning in recent_warnings %}
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <span class="badge bg-{{ warning.warning_level }} me-2">
+                                                {{ warning.get_warning_level_display }}
+                                            </span>
+                                            <small class="text-muted">{{ warning.trigger_source|title }}</small>
+                                            <p class="mb-0 mt-1 small">{{ warning.warning_message|truncatechars:80 }}</p>
+                                        </div>
+                                        <div class="text-end">
+                                            <small class="text-muted">{{ warning.timestamp|timesince }} ago</small>
+                                            {% if not warning.acknowledged %}
+                                                <button class="btn btn-sm btn-outline-success mt-1 acknowledge-btn" 
+                                                        data-warning-id="{{ warning.id }}">
+                                                    <i class="fas fa-check"></i>
+                                                </button>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4 text-muted">
+                            <i class="fas fa-check-circle fa-2x mb-2"></i>
+                            <p class="mb-0">No warnings - you're doing great!</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Chart configuration
+    const chartLabels = {{ chart_labels|safe }};
+    const finalScores = {{ chart_final_scores|safe }};
+    const reactionScores = {{ chart_reaction|safe }};
+    const eyeScores = {{ chart_eye|safe }};
+    const hrvScores = {{ chart_hrv|safe }};
+
+    // Main drift trend chart
+    const ctx = document.getElementById('driftChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: chartLabels.length > 0 ? chartLabels : ['No data'],
+            datasets: [
+                {
+                    label: 'Final Score',
+                    data: finalScores.length > 0 ? finalScores : [0],
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.3,
+                    fill: true
+                },
+                {
+                    label: 'Reaction',
+                    data: reactionScores.length > 0 ? reactionScores : [0],
+                    borderColor: '#dc3545',
+                    borderWidth: 1.5,
+                    tension: 0.3,
+                    hidden: true
+                },
+                {
+                    label: 'Eye',
+                    data: eyeScores.length > 0 ? eyeScores : [0],
+                    borderColor: '#0dcaf0',
+                    borderWidth: 1.5,
+                    tension: 0.3,
+                    hidden: true
+                },
+                {
+                    label: 'HRV',
+                    data: hrvScores.length > 0 ? hrvScores : [0],
+                    borderColor: '#198754',
+                    borderWidth: 1.5,
+                    tension: 0.3,
+                    hidden: true
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    title: {
+                        display: true,
+                        text: 'Drift Score (0-100)'
+                    }
+                }
+            },
+            interaction: {
+                mode: 'nearest',
+                axis: 'x',
+                intersect: false
+            }
+        }
+    });
+
+    // Acknowledge warning buttons
+    document.querySelectorAll('.acknowledge-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const warningId = this.dataset.warningId;
+            fetch(`/acknowledge-warning/${warningId}/`, {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    this.closest('.list-group-item').remove();
+                }
+            });
+        });
+    });
+</script>
+
+<script src="{% static 'js/dashboard.js' %}"></script>
+{% endblock %}
