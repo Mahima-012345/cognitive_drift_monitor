@@ -112,7 +112,7 @@ def dashboard(request):
     recent_drifts = DriftRecord.objects.filter(
         user=user
     ).order_by('-timestamp')[:10]
-
+    
     today_pomodoros = PomodoroSession.objects.filter(
         user=user, start_time__gte=today_start, completed=True
     ).count()
@@ -533,56 +533,86 @@ def api_save_reaction(request):
 @login_required
 def api_save_eye(request):
     """
-    Placeholder POST endpoint for saving eye tracking data.
-    To be integrated with OpenCV module in Phase 3.
+    API endpoint for saving eye tracking data from OpenCV module.
+    Phase 3 - Eye Monitoring Module.
     """
+    print("="*50)
+    print("[EYE SAVE] REQUEST RECEIVED")
+    print(f"[EYE SAVE] Method: {request.method}")
+    print(f"[EYE SAVE] User: {request.user}")
+    print("="*50)
+    
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     try:
         data = json.loads(request.body)
+        print(f"[EYE SAVE] Data keys: {list(data.keys())}")
+        
         form = EyeRecordForm(data)
 
         if form.is_valid():
-            record = EyeRecord.objects.create(
+            print(f"[EYE SAVE] Form valid. Cleaning data...")
+            
+            eye_record = EyeRecord.objects.create(
                 user=request.user,
-                blink_rate=form.cleaned_data['blink_rate'],
-                blink_duration=form.cleaned_data['blink_duration'],
-                eye_state=form.cleaned_data['eye_state'],
-                eye_score=form.cleaned_data['eye_score'],
+                ear=form.cleaned_data.get('ear'),
+                blink_count=form.cleaned_data.get('blink_count', 0),
+                blink_duration_avg=form.cleaned_data.get('blink_duration_avg'),
+                blink_rate=form.cleaned_data.get('blink_rate'),
+                eye_state=form.cleaned_data.get('eye_state', 'normal'),
+                eye_score=form.cleaned_data.get('eye_score', 50),
+                fatigue_flag=form.cleaned_data.get('fatigue_flag', False),
+                ear_samples_json=form.cleaned_data.get('ear_samples', ''),
                 notes=form.cleaned_data.get('notes', ''),
             )
-
+            
+            print(f"[EYE SAVE] EyeRecord created with ID: {eye_record.id}")
+            
+            # Update DriftRecord with eye score
             try:
                 latest_drift = DriftRecord.objects.filter(
                     user=request.user
-                ).exclude(reaction_score__isnull=True).order_by('-timestamp').first()
+                ).order_by('-timestamp').first()
 
+                eye_score = form.cleaned_data.get('eye_score', 50)
+                
                 if latest_drift:
-                    eye_score = form.cleaned_data['eye_score']
                     latest_drift.eye_score = eye_score
+                    if latest_drift.reaction_score:
+                        latest_drift.final_score = (latest_drift.reaction_score + eye_score + (latest_drift.hrv_score or 0)) / 3
                     latest_drift.save()
+                    print(f"[EYE SAVE] Updated DriftRecord ID: {latest_drift.id}")
                     drift_id = latest_drift.id
                 else:
                     drift_record = DriftRecord.objects.create(
                         user=request.user,
-                        eye_score=form.cleaned_data['eye_score'],
+                        eye_score=eye_score,
                     )
+                    print(f"[EYE SAVE] Created new DriftRecord ID: {drift_record.id}")
                     drift_id = drift_record.id
-            except:
+            except Exception as e:
+                print(f"[EYE SAVE] Error updating DriftRecord: {e}")
                 drift_id = None
 
             return JsonResponse({
                 'success': True,
-                'record_id': record.id,
+                'record_id': eye_record.id,
+                'eye_state': eye_record.eye_state,
+                'eye_score': eye_record.eye_score,
                 'drift_record_id': drift_id,
             })
         else:
-            return JsonResponse({'error': 'Invalid data', 'details': form.errors}, status=400)
+            print(f"[EYE SAVE] Form errors: {form.errors}")
+            return JsonResponse({'error': 'Invalid data', 'details': str(form.errors)}, status=400)
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        print(f"[EYE SAVE] JSON decode error: {e}")
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
+        print(f"[EYE SAVE] Error: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
 
 

@@ -111,15 +111,18 @@
                     </div>
                     <h6 class="text-muted mb-1">Eye Score</h6>
                     <div class="score-value 
-                        {% if latest_drift.eye_score %}
-                            {% if latest_drift.eye_score < 30 %}score-good
-                            {% elif latest_drift.eye_score < 60 %}score-warning
+                        {% if latest_eye.eye_score %}
+                            {% if latest_eye.eye_score >= 60 %}score-good
+                            {% elif latest_eye.eye_score >= 40 %}score-warning
                             {% else %}score-danger{% endif %}
                         {% endif %}">
-                        {{ latest_drift.eye_score|default:"--"|stringformat:"%.1f" }}
+                        {{ latest_eye.eye_score|default:"--"|floatformat:0 }}
                     </div>
                     <small class="text-muted">
-                        {% if latest_eye %}State: {{ latest_eye.get_eye_state_display }}{% else %}No data{% endif %}
+                        {% if latest_eye %}
+                            Blink Rate: {{ latest_eye.blink_rate|default:"--"|floatformat:1 }}/min<br>
+                            State: {{ latest_eye.get_eye_state_display|default:"N/A" }}
+                        {% else %}No data{% endif %}
                     </small>
                 </div>
             </div>
@@ -303,6 +306,45 @@
                     <a href="{% url 'reaction_test' %}" class="btn btn-danger btn-lg w-100">
                         <i class="fas fa-play me-2"></i>Start Test
                     </a>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Eye Test Quick Action -->
+        <div class="col-lg-4">
+            <div class="card h-100 border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-eye me-2"></i>
+                        Eye Blink Test
+                    </h5>
+                </div>
+                <div class="card-body text-center">
+                    {% if latest_eye %}
+                        <div class="mb-3">
+                            <div class="h3 mb-0 text-primary">{{ latest_eye.blink_rate|default:"--"|floatformat:1 }}</div>
+                            <small class="text-muted">blinks/min</small>
+                        </div>
+                        <div class="mb-3">
+                            {% if latest_eye.get_eye_state_display %}
+                                <span class="badge bg-{% if latest_eye.eye_state == 'normal' %}success{% elif latest_eye.eye_state == 'drowsy' %}warning{% elif latest_eye.eye_state == 'fatigue' %}orange{% else %}danger{% endif %} p-2">
+                                    {{ latest_eye.get_eye_state_display }}
+                                </span>
+                            {% endif %}
+                        </div>
+                        <div class="mb-3">
+                            <small class="text-muted">Blinks: {{ latest_eye.blink_count|default:"0" }}</small>
+                        </div>
+                    {% else %}
+                        <div class="mb-3">
+                            <i class="fas fa-eye fa-3x text-muted mb-2"></i>
+                            <p class="text-muted">No eye tests yet</p>
+                        </div>
+                    {% endif %}
+                    
+                    <button class="btn btn-primary btn-lg w-100" onclick="alert('Run: python eye_tracker.py from terminal')">
+                        <i class="fas fa-play me-2"></i>Run Eye Tracker
+                    </button>
                 </div>
             </div>
         </div>

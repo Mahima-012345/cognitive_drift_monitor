@@ -17,7 +17,7 @@ def create_user_profile(sender, instance, created, **kwargs):
     This ensures every user has a profile for settings and preferences.
     """
     if created:
-        UserProfile.objects.create(user=instance)
+        UserProfile.objects.get_or_create(user=instance)
 
 
 @receiver(post_save, sender=User)

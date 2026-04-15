@@ -54,10 +54,9 @@ class UserRegistrationForm(UserCreationForm):
         user.email = self.cleaned_data['email']
         if commit:
             user.save()
-            profile = UserProfile.objects.create(
-                user=user,
-                full_name=self.cleaned_data['full_name']
-            )
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            profile.full_name = self.cleaned_data['full_name']
+            profile.save()
         return user
 
 
@@ -160,16 +159,21 @@ class ReactionSessionForm(forms.Form):
 
 
 class EyeRecordForm(forms.Form):
-    """Form for saving eye tracking data (placeholder for future OpenCV integration)."""
-    blink_rate = forms.FloatField(min_value=0, required=True)
-    blink_duration = forms.FloatField(min_value=0, required=True)
+    """Form for saving eye tracking data from OpenCV module (Phase 3)."""
+    ear = forms.FloatField(min_value=0, max_value=0.5, required=False)
+    blink_count = forms.IntegerField(min_value=0, required=False, initial=0)
+    blink_duration_avg = forms.FloatField(min_value=0, required=False)
+    blink_rate = forms.FloatField(min_value=0, required=False)
     eye_state = forms.ChoiceField(choices=[
-        ('open', 'Open'),
-        ('closed', 'Closed'),
+        ('normal', 'Normal'),
+        ('fatigue', 'Fatigue'),
+        ('eye_strain', 'Eye Strain'),
         ('drowsy', 'Drowsy'),
         ('looking_away', 'Looking Away'),
-    ])
+    ], required=False, initial='normal')
     eye_score = forms.FloatField(min_value=0, max_value=100, required=True)
+    fatigue_flag = forms.BooleanField(required=False, initial=False)
+    ear_samples = forms.CharField(required=False)
     notes = forms.CharField(required=False, widget=forms.Textarea(attrs={'rows': 2}))
 
 

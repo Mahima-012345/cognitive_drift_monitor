@@ -97,7 +97,8 @@ class ReactionSessionAdmin(admin.ModelAdmin):
         if obj.baseline_mean_at_time:
             pct = obj.percent_change_from_baseline
             sign = '+' if pct and pct > 0 else ''
-            return f"vs {obj.baseline_mean_at_time:.0f}ms ({sign}{pct:.1f}%)"
+            pct_str = f"{pct:.1f}" if pct is not None else "0.0"
+            return f"vs {obj.baseline_mean_at_time:.0f}ms ({sign}{pct_str}%)"
         return 'Building baseline'
     baseline_info.short_description = 'vs Baseline'
 
@@ -106,7 +107,8 @@ class ReactionSessionAdmin(admin.ModelAdmin):
             return format_html('<span style="color: gray;">No data</span>')
         score = float(obj.confidence_score)
         colors = {'high': 'green', 'medium': 'orange', 'low': 'red', 'provisional': 'gray'}
-        return format_html('<span style="color: {};">{:.0%} ({})</span>', colors.get(obj.confidence_level, 'black'), score, obj.confidence_level)
+        level = obj.confidence_level if obj.confidence_level else 'unknown'
+        return format_html('<span style="color: {};">{:.0%} ({})</span>', colors.get(level, 'black'), score, level)
     confidence_display.short_description = 'Confidence'
 
     def accuracy_display(self, obj):
@@ -118,15 +120,47 @@ class ReactionSessionAdmin(admin.ModelAdmin):
 
 @admin.register(EyeRecord)
 class EyeRecordAdmin(admin.ModelAdmin):
-    list_display = ['user', 'timestamp', 'blink_rate', 'blink_duration', 'eye_state', 'eye_score_display']
-    list_filter = ['eye_state', 'timestamp']
+    list_display = ['user', 'timestamp', 'ear_display', 'blink_count', 'blink_rate_display', 'eye_state_display', 'eye_score_display']
+    list_filter = ['eye_state', 'fatigue_flag', 'timestamp']
     search_fields = ['user__username']
     ordering = ['-timestamp']
     readonly_fields = ['timestamp']
 
+    def ear_display(self, obj):
+        if obj.ear is not None:
+            try:
+                return format_html("{:.3f}", float(obj.ear))
+            except (ValueError, TypeError):
+                return '-'
+        return '-'
+    ear_display.short_description = 'EAR'
+
+    def blink_rate_display(self, obj):
+        if obj.blink_rate is not None:
+            try:
+                return format_html("{:.1f}/min", float(obj.blink_rate))
+            except (ValueError, TypeError):
+                return '-'
+        return '-'
+    blink_rate_display.short_description = 'Blink Rate'
+
+    def eye_state_display(self, obj):
+        colors = {'normal': 'green', 'drowsy': 'orange', 'fatigue': 'darkorange', 'eye_strain': 'red', 'looking_away': 'gray'}
+        color = colors.get(obj.eye_state, 'black')
+        state_name = obj.get_eye_state_display() if obj.eye_state else 'Unknown'
+        return format_html('<span style="color: {};">{}</span>', color, state_name)
+    eye_state_display.short_description = 'State'
+
     def eye_score_display(self, obj):
-        color = 'green' if obj.eye_score < 30 else ('orange' if obj.eye_score < 60 else 'red')
-        return format_html('<span style="color: {};">{:.1f}</span>', color, obj.eye_score)
+        if obj.eye_score is not None:
+            if obj.eye_score >= 60:
+                color = 'green'
+            elif obj.eye_score >= 40:
+                color = 'orange'
+            else:
+                color = 'red'
+            return format_html('<span style="color: {};">{:.0f}</span>', color, float(obj.eye_score))
+        return format_html('<span style="color: gray;">-</span>')
     eye_score_display.short_description = 'Eye Score'
 
 
@@ -139,8 +173,15 @@ class HRVRecordAdmin(admin.ModelAdmin):
     readonly_fields = ['timestamp']
 
     def hrv_score_display(self, obj):
-        color = 'green' if obj.hrv_score < 30 else ('orange' if obj.hrv_score < 60 else 'red')
-        return format_html('<span style="color: {};">{:.1f}</span>', color, obj.hrv_score)
+        if obj.hrv_score is not None:
+            if obj.hrv_score >= 60:
+                color = 'green'
+            elif obj.hrv_score >= 40:
+                color = 'orange'
+            else:
+                color = 'red'
+            return format_html('<span style="color: {};">{:.1f}</span>', color, obj.hrv_score)
+        return format_html('<span style="color: gray;">-</span>')
     hrv_score_display.short_description = 'HRV Score'
 
 

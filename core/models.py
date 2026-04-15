@@ -347,20 +347,33 @@ class EyeRecord(models.Model):
     """
     Stores eye tracking data from computer vision module.
     Tracks blink patterns and eye state for drowsiness detection.
+    Phase 3 - Eye Monitoring Module.
     """
     EYE_STATE_CHOICES = [
-        ('open', 'Open'),
-        ('closed', 'Closed'),
+        ('normal', 'Normal'),
+        ('fatigue', 'Fatigue'),
+        ('eye_strain', 'Eye Strain'),
         ('drowsy', 'Drowsy'),
         ('looking_away', 'Looking Away'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='eye_records')
     timestamp = models.DateTimeField(default=timezone.now)
-    blink_rate = models.FloatField(help_text="Blinks per minute")
-    blink_duration = models.FloatField(help_text="Average blink duration in milliseconds")
-    eye_state = models.CharField(max_length=20, choices=EYE_STATE_CHOICES, default='open')
+    
+    # Eye metrics from OpenCV
+    ear = models.FloatField(null=True, blank=True, help_text="Eye Aspect Ratio (0.0-0.3)")
+    blink_count = models.PositiveIntegerField(default=0, help_text="Total blinks detected in session")
+    blink_duration_avg = models.FloatField(null=True, blank=True, help_text="Average blink duration in ms")
+    blink_rate = models.FloatField(null=True, blank=True, help_text="Blinks per minute")
+    
+    # Eye state and scoring
+    eye_state = models.CharField(max_length=20, choices=EYE_STATE_CHOICES, default='normal')
     eye_score = models.FloatField(help_text="Computed eye fatigue/drowsiness score (0-100)")
+    fatigue_flag = models.BooleanField(default=False, help_text="True if drowsiness detected")
+    
+    # Raw data storage
+    ear_samples_json = models.TextField(blank=True, help_text="Recent EAR samples for trend analysis")
+    
     notes = models.TextField(blank=True)
 
     class Meta:
