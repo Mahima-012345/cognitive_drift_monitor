@@ -130,7 +130,7 @@
 
         <!-- HRV Score -->
         <div class="col-md-6 col-lg-3">
-            <div class="card stat-card h-100">
+            <div class="card stat-card h-100 border-success">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <div class="icon-box bg-success bg-opacity-10 text-success">
@@ -140,15 +140,30 @@
                     </div>
                     <h6 class="text-muted mb-1">HRV Score</h6>
                     <div class="score-value 
-                        {% if latest_drift.hrv_score %}
-                            {% if latest_drift.hrv_score < 30 %}score-good
-                            {% elif latest_drift.hrv_score < 60 %}score-warning
+                        {% if latest_hrv.hrv_score %}
+                            {% if latest_hrv.hrv_score >= 60 %}score-good
+                            {% elif latest_hrv.hrv_score >= 40 %}score-warning
                             {% else %}score-danger{% endif %}
                         {% endif %}">
-                        {{ latest_drift.hrv_score|default:"--"|stringformat:"%.1f" }}
+                        {{ latest_hrv.hrv_score|default:"--"|stringformat:"%.0f" }}
                     </div>
                     <small class="text-muted">
-                        {% if latest_hrv %}BPM: {{ latest_hrv.bpm|floatformat:0 }}{% else %}No data{% endif %}
+                        {% if latest_hrv %}
+                            <span class="me-2">BPM: <strong>{{ latest_hrv.bpm|floatformat:0 }}</strong></span>
+                            <span class="me-2">SDNN: <strong>{{ latest_hrv.sdnn|floatformat:1 }}</strong></span>
+                            <br>
+                            <span class="badge bg-{% if latest_hrv.stress_level == 'relaxed' %}success{% elif latest_hrv.stress_level == 'unstable' %}warning text-dark{% elif latest_hrv.stress_level == 'normal' %}info{% elif latest_hrv.stress_level == 'mild_stress' %}warning{% elif latest_hrv.stress_level == 'moderate_stress' %}orange{% else %}danger{% endif %} mt-1">
+                                {% if latest_hrv.stress_level == 'unstable' %}
+                                    Unstable
+                                {% else %}
+                                    {{ latest_hrv.get_stress_level_display }}
+                                {% endif %}
+                            </span>
+                            <br>
+                            <span class="text-muted small">{{ latest_hrv.timestamp|timesince }} ago</span>
+                        {% else %}
+                            No data
+                        {% endif %}
                     </small>
                 </div>
             </div>
@@ -447,9 +462,10 @@
                     label: 'HRV',
                     data: hrvScores.length > 0 ? hrvScores : [0],
                     borderColor: '#198754',
-                    borderWidth: 1.5,
+                    backgroundColor: 'rgba(25, 135, 84, 0.1)',
+                    borderWidth: 2,
                     tension: 0.3,
-                    hidden: true
+                    fill: false
                 }
             ]
         },

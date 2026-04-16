@@ -46,4 +46,8 @@ urlpatterns = [
     path('api/save-reaction/', views.api_save_reaction, name='api_save_reaction'),
     path('api/save-eye/', views.api_save_eye, name='api_save_eye'),
     path('api/save-hrv/', views.api_save_hrv, name='api_save_hrv'),
+    
+    # Phase 4 - HRV Bridge API (used by hrv_bridge.py)
+    path('api/hrv-bridge-login/', views.api_hrv_bridge_login, name='api_hrv_bridge_login'),
+    path('api/hrv-bridge/', views.api_hrv_bridge, name='api_hrv_bridge'),
 ]

@@ -7,6 +7,7 @@ Phase 1 - Core web foundation with API endpoints.
 from django.shortcuts import render, redirect
 from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import User
 from django.contrib import messages
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_http_methods
@@ -138,6 +139,22 @@ def dashboard(request):
         chart_eye.append(record.eye_score if record.eye_score else 0)
         chart_hrv.append(record.hrv_score if record.hrv_score else 0)
 
+    # HRV chart data - last 30 records
+    recent_hrv_records = HRVRecord.objects.filter(
+        user=user
+    ).order_by('-timestamp')[:30]
+    
+    hrv_chart_labels = []
+    hrv_chart_bpm = []
+    hrv_chart_sdnn = []
+    
+    for record in reversed(list(recent_hrv_records)):
+        hrv_chart_labels.append(record.timestamp.strftime('%H:%M:%S'))
+        hrv_chart_bpm.append(record.bpm)
+        hrv_chart_sdnn.append(record.sdnn)
+    
+    hrv_count = HRVRecord.objects.filter(user=user).count()
+
     context = {
         'profile': profile,
         'latest_drift': latest_drift,
@@ -155,6 +172,10 @@ def dashboard(request):
         'chart_eye': json.dumps(chart_eye),
         'chart_hrv': json.dumps(chart_hrv),
         'reaction_baseline': ReactionSession.get_baseline_for_user(user),
+        'hrv_chart_labels': json.dumps(hrv_chart_labels),
+        'hrv_chart_bpm': json.dumps(hrv_chart_bpm),
+        'hrv_chart_sdnn': json.dumps(hrv_chart_sdnn),
+        'hrv_record_count': hrv_count,
     }
 
     # Add baseline info to context for template
@@ -620,8 +641,15 @@ def api_save_eye(request):
 @login_required
 def api_save_hrv(request):
     """
-    Placeholder POST endpoint for saving HRV data.
-    To be integrated with IoT/physiological sensor module in Phase 4.
+    POST endpoint for saving HRV data from Arduino MAX30102 sensor.
+    Phase 4 - HRV Module.
+    
+    Accepts JSON:
+    - bpm: heart rate
+    - sdnn: HRV standard deviation
+    - ir_value: raw infrared sensor value (optional)
+    - stress: stress level string from Arduino (e.g., "Low Stress", "High Stress")
+    - hrv_score: computed score (optional, calculated if not provided)
     """
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -631,12 +659,24 @@ def api_save_hrv(request):
         form = HRVRecordForm(data)
 
         if form.is_valid():
+            bpm = form.cleaned_data['bpm']
+            sdnn = form.cleaned_data['sdnn']
+            ir_value = form.cleaned_data.get('ir_value')
+            
+            stress_str = data.get('stress', 'normal')
+            stress_level = map_arduino_stress(stress_str)
+            
+            hrv_score = form.cleaned_data.get('hrv_score')
+            if hrv_score is None:
+                hrv_score = calculate_hrv_score(bpm, sdnn, stress_level)
+            
             record = HRVRecord.objects.create(
                 user=request.user,
-                bpm=form.cleaned_data['bpm'],
-                sdnn=form.cleaned_data['sdnn'],
-                stress_level=form.cleaned_data['stress_level'],
-                hrv_score=form.cleaned_data['hrv_score'],
+                bpm=bpm,
+                sdnn=sdnn,
+                ir_value=ir_value,
+                stress_level=stress_level,
+                hrv_score=hrv_score,
                 notes=form.cleaned_data.get('notes', ''),
             )
 
@@ -646,13 +686,13 @@ def api_save_hrv(request):
                 ).order_by('-timestamp').first()
 
                 if latest_drift:
-                    latest_drift.hrv_score = form.cleaned_data['hrv_score']
+                    latest_drift.hrv_score = hrv_score
                     latest_drift.save()
                     drift_id = latest_drift.id
                 else:
                     drift_record = DriftRecord.objects.create(
                         user=request.user,
-                        hrv_score=form.cleaned_data['hrv_score'],
+                        hrv_score=hrv_score,
                     )
                     drift_id = drift_record.id
             except:
@@ -661,6 +701,8 @@ def api_save_hrv(request):
             return JsonResponse({
                 'success': True,
                 'record_id': record.id,
+                'hrv_score': hrv_score,
+                'stress_level': stress_level,
                 'drift_record_id': drift_id,
             })
         else:
@@ -670,6 +712,186 @@ def api_save_hrv(request):
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+
+def map_arduino_stress(stress_str, sdnn=None):
+    """Map Arduino stress string to model choices based on SDNN.
+    
+    SDNN-based classification:
+    - sdnn < 30: High Stress
+    - 30-60: Moderate
+    - 60-120: Relaxed
+    - > 120: Unstable
+    """
+    if sdnn is not None:
+        if sdnn > 120:
+            return 'unstable'
+        elif sdnn >= 60:
+            return 'relaxed'
+        elif sdnn >= 30:
+            return 'moderate'
+        else:
+            return 'high_stress'
+    
+    stress_str_lower = stress_str.lower() if stress_str else 'normal'
+    
+    if 'unstable' in stress_str_lower:
+        return 'unstable'
+    elif 'high stress' in stress_str_lower or 'high_stress' in stress_str_lower:
+        return 'high_stress'
+    elif 'moderate' in stress_str_lower:
+        return 'moderate_stress'
+    elif 'relaxed' in stress_str_lower:
+        return 'relaxed'
+    elif 'mild' in stress_str_lower:
+        return 'mild_stress'
+    return 'normal'
+
+
+def calculate_hrv_score(bpm, sdnn, stress_level):
+    """Calculate HRV score (0-100) based on BPM, SDNN, and stress level.
+    Higher score = better HRV (more relaxed).
+    """
+    base_score = 50
+    
+    if 60 <= bpm <= 80:
+        base_score += 15
+    elif bpm < 60:
+        base_score += 10
+    elif bpm > 100:
+        base_score -= 15
+    elif bpm > 85:
+        base_score -= 10
+    
+    if 60 <= sdnn <= 100:
+        base_score += 15
+    elif sdnn > 100:
+        base_score += 10
+    elif 30 <= sdnn < 60:
+        base_score += 5
+    elif sdnn < 20:
+        base_score -= 15
+    elif sdnn < 30:
+        base_score -= 10
+    
+    stress_penalty = {
+        'relaxed': -15,
+        'normal': 0,
+        'mild_stress': 10,
+        'moderate_stress': 20,
+        'high_stress': 30,
+    }
+    base_score += stress_penalty.get(stress_level, 0)
+    
+    return max(0, min(100, base_score))
+
+
+@csrf_exempt
+def api_hrv_bridge_login(request):
+    """
+    Bridge login endpoint - authenticates Python bridge script.
+    Returns session cookie on success.
+    
+    Expects JSON: {"username": "...", "password": "..."}
+    Returns: {"success": true, "username": "..."} with session cookie
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+    
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    
+    if not username or not password:
+        return JsonResponse({'success': False, 'error': 'Username and password required'}, status=400)
+    
+    try:
+        user_obj = User.objects.get(username=username)
+    except User.DoesNotExist:
+        return JsonResponse({'success': False, 'error': f'User "{username}" not found'}, status=401)
+    
+    user = authenticate(request, username=username, password=password)
+    
+    if user is not None:
+        login(request, user)
+        return JsonResponse({
+            'success': True,
+            'username': user.username,
+            'user_id': user.id,
+            'message': 'Authenticated successfully'
+        })
+    else:
+        return JsonResponse({'success': False, 'error': 'Invalid password for user "' + username + '"'}, status=401)
+
+
+@csrf_exempt
+@login_required
+def api_hrv_bridge(request):
+    """
+    API endpoint for HRV serial bridge script.
+    Phase 4 - HRV Module.
+    
+    Requires authenticated session (login via /api/hrv-bridge-login/ first).
+    
+    Accepts JSON:
+    - ir: raw infrared value (optional)
+    - bpm: heart rate (required)
+    - sdnn: SDNN value (required)
+    - stress: Arduino stress string (e.g., "Low Stress")
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    if not request.user.is_authenticated:
+        return JsonResponse({'success': False, 'error': 'Not authenticated'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+    
+    bpm = data.get('bpm')
+    sdnn = data.get('sdnn')
+    
+    if bpm is None or sdnn is None:
+        return JsonResponse({'success': False, 'error': 'Missing bpm or sdnn'}, status=400)
+    
+    try:
+        bpm = float(bpm)
+        sdnn = float(sdnn)
+    except (ValueError, TypeError):
+        return JsonResponse({'success': False, 'error': 'bpm and sdnn must be numbers'}, status=400)
+    
+    ir_value = data.get('ir')
+    stress_str = data.get('stress', 'normal')
+    stress_level = map_arduino_stress(stress_str, sdnn)
+    hrv_score = calculate_hrv_score(bpm, sdnn, stress_level)
+    
+    try:
+        record = HRVRecord.objects.create(
+            user=request.user,
+            bpm=bpm,
+            sdnn=sdnn,
+            ir_value=ir_value,
+            stress_level=stress_level,
+            hrv_score=hrv_score,
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'status': 'saved',
+            'record_id': record.id,
+            'hrv_score': hrv_score,
+            'stress_level': stress_level,
+            'user': request.user.username,
+        })
+        
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 @csrf_exempt

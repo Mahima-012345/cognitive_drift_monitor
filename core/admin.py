@@ -166,22 +166,27 @@ class EyeRecordAdmin(admin.ModelAdmin):
 
 @admin.register(HRVRecord)
 class HRVRecordAdmin(admin.ModelAdmin):
-    list_display = ['user', 'timestamp', 'bpm', 'sdnn', 'stress_level', 'hrv_score_display']
+    list_display = ['user', 'timestamp', 'bpm', 'sdnn', 'ir_value', 'stress_level', 'hrv_score_display']
     list_filter = ['stress_level', 'timestamp']
     search_fields = ['user__username']
     ordering = ['-timestamp']
     readonly_fields = ['timestamp']
 
     def hrv_score_display(self, obj):
-        if obj.hrv_score is not None:
-            if obj.hrv_score >= 60:
+        try:
+            score_val = obj.hrv_score
+            if score_val is None:
+                return format_html('<span style="color: gray;">-</span>')
+            score = float(str(score_val))
+            if score >= 60:
                 color = 'green'
-            elif obj.hrv_score >= 40:
+            elif score >= 40:
                 color = 'orange'
             else:
                 color = 'red'
-            return format_html('<span style="color: {};">{:.1f}</span>', color, obj.hrv_score)
-        return format_html('<span style="color: gray;">-</span>')
+            return format_html('<span style="color: {};">{:.1f}</span>', color, score)
+        except (ValueError, TypeError):
+            return format_html('<span style="color: gray;">err</span>')
     hrv_score_display.short_description = 'HRV Score'
 
 

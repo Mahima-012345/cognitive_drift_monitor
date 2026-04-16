@@ -178,15 +178,16 @@ class EyeRecordForm(forms.Form):
 
 
 class HRVRecordForm(forms.Form):
-    """Form for saving HRV data (placeholder for future IoT integration)."""
+    """Form for saving HRV data from Arduino MAX30102 sensor (Phase 4)."""
     bpm = forms.FloatField(min_value=0, required=True)
     sdnn = forms.FloatField(min_value=0, required=True)
+    ir_value = forms.IntegerField(min_value=0, required=False)
     stress_level = forms.ChoiceField(choices=[
         ('relaxed', 'Relaxed'),
         ('normal', 'Normal'),
         ('mild_stress', 'Mild Stress'),
         ('moderate_stress', 'Moderate Stress'),
         ('high_stress', 'High Stress'),
-    ])
-    hrv_score = forms.FloatField(min_value=0, max_value=100, required=True)
+    ], required=False, initial='normal')
+    hrv_score = forms.FloatField(min_value=0, max_value=100, required=False)
     notes = forms.CharField(required=False, widget=forms.Textarea(attrs={'rows': 2}))

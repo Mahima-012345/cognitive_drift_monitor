@@ -392,6 +392,7 @@ class HRVRecord(models.Model):
     """
     Stores heart rate variability data from physiological sensors.
     HRV is a key indicator of stress and cognitive load.
+    Phase 4 - HRV Module (MAX30102 + Arduino).
     """
     STRESS_LEVEL_CHOICES = [
         ('relaxed', 'Relaxed'),
@@ -399,14 +400,16 @@ class HRVRecord(models.Model):
         ('mild_stress', 'Mild Stress'),
         ('moderate_stress', 'Moderate Stress'),
         ('high_stress', 'High Stress'),
+        ('unstable', 'Unstable'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='hrv_records')
     timestamp = models.DateTimeField(default=timezone.now)
     bpm = models.FloatField(help_text="Heart rate in beats per minute")
     sdnn = models.FloatField(help_text="SDNN - Standard deviation of NN intervals (ms)")
+    ir_value = models.IntegerField(null=True, blank=True, help_text="Infrared sensor raw value from MAX30102")
     stress_level = models.CharField(max_length=20, choices=STRESS_LEVEL_CHOICES, default='normal')
-    hrv_score = models.FloatField(help_text="Computed HRV-based stress/fatigue score (0-100)")
+    hrv_score = models.FloatField(null=True, blank=True, help_text="Computed HRV-based stress/fatigue score (0-100)")
     notes = models.TextField(blank=True)
 
     class Meta:

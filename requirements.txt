@@ -1,2 +1,4 @@
 # cognitive_drift_monitor/requirements.txt
 django>=4.2
+pyserial>=3.5
+requests>=2.28
