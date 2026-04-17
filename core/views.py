@@ -4,6 +4,8 @@ Views for Cognitive Drift Detection System.
 Phase 1 - Core web foundation with API endpoints.
 """
 
+DEBUG = True  # Set to False to disable debug prints
+
 from django.shortcuts import render, redirect
 from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required
@@ -25,7 +27,8 @@ from .forms import (
     UserRegistrationForm, UserProfileForm, LoginForm,
     ReactionSessionForm, EyeRecordForm, HRVRecordForm
 )
-
+from .fusion_engine import calculate_fusion
+from .models import FusionRecord
 
 def home(request):
     """Landing page for the application."""
@@ -126,15 +129,19 @@ def dashboard(request):
         user=user, timestamp__gte=week_ago
     ).order_by('timestamp')
 
+    weekly_fusion_records = FusionRecord.objects.filter(
+        user=user, timestamp__gte=week_ago
+    ).order_by('timestamp')
+
     chart_labels = []
     chart_final_scores = []
     chart_reaction = []
     chart_eye = []
     chart_hrv = []
 
-    for record in weekly_drift_records:
+    for record in weekly_fusion_records:
         chart_labels.append(record.timestamp.strftime('%b %d %H:%M'))
-        chart_final_scores.append(record.final_score if record.final_score else 0)
+        chart_final_scores.append(record.final_drift_score if record.final_drift_score else 0)
         chart_reaction.append(record.reaction_score if record.reaction_score else 0)
         chart_eye.append(record.eye_score if record.eye_score else 0)
         chart_hrv.append(record.hrv_score if record.hrv_score else 0)
@@ -154,6 +161,27 @@ def dashboard(request):
         hrv_chart_sdnn.append(record.sdnn)
     
     hrv_count = HRVRecord.objects.filter(user=user).count()
+
+    # Get latest fusion and check for chronic drift
+    latest_fusion = FusionRecord.objects.filter(user=user).order_by('-timestamp').first()
+    
+    # Chronic drift check: last 5 records, if 3+ are MODERATE or CONFIRMED
+    chronic_state = None
+    if latest_fusion:
+        recent_5 = FusionRecord.objects.filter(user=user).order_by('-timestamp')[:5]
+        drift_count = sum(1 for r in recent_5 if r.final_state in ['MODERATE_DRIFT', 'CONFIRMED_DRIFT'])
+        if drift_count >= 3:
+            chronic_state = 'CHRONIC_DRIFT'
+    
+    # State display name mapping
+    state_display = {
+        'STABLE': 'Stable',
+        'MILD_DRIFT': 'Mild Drift',
+        'MODERATE_DRIFT': 'Moderate Drift',
+        'CONFIRMED_DRIFT': 'Confirmed Drift',
+        'CHRONIC_DRIFT': 'Chronic Drift',
+    }
+    fusion_state_display = state_display.get(latest_fusion.final_state, 'No Data') if latest_fusion else 'No Data'
 
     context = {
         'profile': profile,
@@ -176,6 +204,9 @@ def dashboard(request):
         'hrv_chart_bpm': json.dumps(hrv_chart_bpm),
         'hrv_chart_sdnn': json.dumps(hrv_chart_sdnn),
         'hrv_record_count': hrv_count,
+        'latest_fusion': latest_fusion,
+        'fusion_state_display': fusion_state_display,
+        'chronic_state': chronic_state,
     }
 
     # Add baseline info to context for template
@@ -961,11 +992,17 @@ def api_save_reaction_session(request):
         baseline = ReactionSession.get_baseline_for_user(user)
         
         reaction_score = min(100, max(0, 30 + (session.variability * 50) + (session.z_score * 10)))
-        print(f"[REACTION SAVE] reaction_score calculated: {reaction_score}")
+        if DEBUG:
+            print(f"[REACTION SAVE] reaction_score calculated: {reaction_score}")
+        
+        # Save drift_score to session for Phase 5 fusion
+        session.drift_score = reaction_score
+        session.save()
         
         try:
             latest_drift = DriftRecord.objects.filter(user=user).order_by('-timestamp').first()
-            print(f"[REACTION SAVE] Latest drift record: {latest_drift}")
+            if DEBUG:
+                print(f"[REACTION SAVE] Latest drift record: {latest_drift}")
             
             if latest_drift:
                 latest_drift.reaction_score = reaction_score
@@ -1095,3 +1132,52 @@ def api_reaction_chart_data(request):
             'mean': round(baseline['baseline_mean'], 2) if baseline['baseline_mean'] else None,
         }
     })
+
+
+
+
+
+
+@login_required
+def run_fusion(request):
+
+    reaction = ReactionSession.objects.filter(user=request.user).order_by('-timestamp').first()
+    eye = EyeRecord.objects.filter(user=request.user).order_by('-timestamp').first()
+    hrv = HRVRecord.objects.filter(user=request.user).order_by('-timestamp').first()
+
+    # Safety check
+    if not reaction or not eye or not hrv:
+        return JsonResponse({"error": "Not enough data"}, status=400)
+
+    # ✅ FIXED LINES with fallback logic
+    if DEBUG:
+        print(f"[FUSION] reaction.drift_score = {reaction.drift_score}, mean_rt = {reaction.mean_rt}")
+    if reaction.drift_score is not None:
+        reaction_score = reaction.drift_score
+    elif reaction.mean_rt is not None:
+        reaction_score = max(0, min(100, 100 - (reaction.mean_rt / 10)))
+    else:
+        reaction_score = 0
+    if DEBUG:
+        print(f"[FUSION] final reaction_score = {reaction_score}")
+    eye_score = eye.eye_score if eye.eye_score is not None else 0
+    hrv_score = hrv.hrv_score if hrv.hrv_score is not None else 0
+
+    result = calculate_fusion(reaction_score, eye_score, hrv_score)
+
+
+    
+
+    FusionRecord.objects.create(
+        user=request.user,
+        reaction_score=reaction_score,
+        eye_score=eye_score,
+        hrv_score=hrv_score,
+        final_drift_score=result["final_score"],
+        confidence_level=result["confidence"],
+        final_state=result["state"],
+        trigger_reaction_test=result["trigger"],
+        intervention_message=result["message"]
+    )
+
+    return JsonResponse(result)

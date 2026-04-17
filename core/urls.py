@@ -50,4 +50,8 @@ urlpatterns = [
     # Phase 4 - HRV Bridge API (used by hrv_bridge.py)
     path('api/hrv-bridge-login/', views.api_hrv_bridge_login, name='api_hrv_bridge_login'),
     path('api/hrv-bridge/', views.api_hrv_bridge, name='api_hrv_bridge'),
+
+
+    #Phase 5 - Fusion
+    path('fusion/', views.run_fusion, name='fusion'),
 ]

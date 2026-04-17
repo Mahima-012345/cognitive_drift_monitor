@@ -568,3 +568,23 @@ class DistractionRecord(models.Model):
 
     def __str__(self):
         return f"Distraction - {self.user.username} - {self.distraction_name}"
+
+class FusionRecord(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    reaction_score = models.FloatField(null=True, blank=True)
+    eye_score = models.FloatField(null=True, blank=True)
+    hrv_score = models.FloatField(null=True, blank=True)
+
+    final_drift_score = models.FloatField(null=True, blank=True)
+
+    confidence_level = models.CharField(max_length=20, null=True, blank=True)
+    final_state = models.CharField(max_length=30, null=True, blank=True)
+
+    trigger_reaction_test = models.BooleanField(default=False)
+
+    intervention_message = models.TextField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user} - {self.final_state}"
