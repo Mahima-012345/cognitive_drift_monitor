@@ -29,6 +29,30 @@ from .forms import (
 )
 from .fusion_engine import calculate_fusion
 from .models import FusionRecord
+from .validation_engine import (
+    evaluate_suspected_drift,
+    validate_reaction_confirmation,
+    get_latest_validation_status
+)
+from .warning_levels import get_warning_info, get_level_display_name, WARNING_MESSAGES
+
+
+def map_state_to_level(current_state):
+    """Phase 7: Centralized state to level mapping"""
+    state_lower = str(current_state).lower() if current_state else ""
+    
+    if state_lower in ["stable", "normal", "no data"]:
+        return 0, "Level 0"
+    elif state_lower == "mild_drift":
+        return 1, "Level 1"
+    elif state_lower in ["moderate_drift", "suspected_drift"]:
+        return 2, "Level 2"
+    elif state_lower == "confirmed_drift":
+        return 3, "Level 3"
+    elif state_lower == "chronic_drift":
+        return 4, "Level 4"
+    else:
+        return 0, "Level 0"
 
 def home(request):
     """Landing page for the application."""
@@ -100,10 +124,40 @@ def dashboard(request):
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = now - timedelta(days=7)
 
+    # Debug prints - must show actual data
+    print("="*50)
+    print("USER:", user)
+    print("="*50)
+    
+    # Get latest records for user
     latest_drift = DriftRecord.objects.filter(user=user).order_by('-timestamp').first()
     latest_reaction = ReactionSession.objects.filter(user=user).order_by('-timestamp').first()
     latest_eye = EyeRecord.objects.filter(user=user).order_by('-timestamp').first()
     latest_hrv = HRVRecord.objects.filter(user=user).order_by('-timestamp').first()
+    
+    print("LATEST_REACTION:", latest_reaction)
+    print("LATEST_EYE:", latest_eye)
+    print("LATEST_HRV:", latest_hrv)
+    print("LATEST_DRIFT:", latest_drift)
+    
+    # Get counts
+    reaction_count = ReactionSession.objects.filter(user=user).count()
+    eye_count = EyeRecord.objects.filter(user=user).count()
+    hrv_count = HRVRecord.objects.filter(user=user).count()
+    drift_count = DriftRecord.objects.filter(user=user).count()
+    
+    print(f"RECORD COUNTS - Reaction: {reaction_count}, Eye: {eye_count}, HRV: {hrv_count}, Drift: {drift_count}")
+    
+    if latest_hrv:
+        if DEBUG:
+            print(f"[DASHBOARD DEBUG] HRV: bpm={latest_hrv.bpm}, sdnn={latest_hrv.sdnn}, stress_level={latest_hrv.stress_level}, hrv_score={latest_hrv.hrv_score}")
+    else:
+        if DEBUG:
+            total_hrv = HRVRecord.objects.count()
+            all_hrv = HRVRecord.objects.all()[:3]
+            print(f"[DASHBOARD DEBUG] No HRVRecord for user: {user}, total in DB: {total_hrv}")
+            for h in all_hrv:
+                print(f"[DASHBOARD DEBUG]   -> HRV ID={h.id}, user={h.user}, bpm={h.bpm}")
 
     unacknowledged_warnings = WarningLog.objects.filter(
         user=user, acknowledged=False
@@ -111,7 +165,25 @@ def dashboard(request):
 
     recent_warnings = WarningLog.objects.filter(
         user=user
-    ).order_by('-timestamp')[:5]
+    ).order_by('-timestamp')[:20]
+
+    unique_recent_warnings = []
+    seen_combos = set()
+    for w in recent_warnings:
+        combo = (w.warning_level, w.warning_message[:50])
+        if combo not in seen_combos:
+            seen_combos.add(combo)
+            unique_recent_warnings.append(w)
+        if len(unique_recent_warnings) >= 5:
+            break
+
+    recent_warnings = unique_recent_warnings
+
+    # Get latest warning for toast popup (Level 2+ only)
+    latest_warning = WarningLog.objects.filter(
+        user=user,
+        warning_level__in=['level_2', 'level_3', 'level_4']
+    ).order_by('-timestamp').first()
 
     recent_drifts = DriftRecord.objects.filter(
         user=user
@@ -124,14 +196,19 @@ def dashboard(request):
     today_distractions = DistractionRecord.objects.filter(
         user=user, timestamp__gte=today_start
     ).count()
-
-    weekly_drift_records = DriftRecord.objects.filter(
-        user=user, timestamp__gte=week_ago
-    ).order_by('timestamp')
-
-    weekly_fusion_records = FusionRecord.objects.filter(
-        user=user, timestamp__gte=week_ago
-    ).order_by('timestamp')
+    
+    # Today's goal
+    today_goal = GoalRecord.objects.filter(user=user, date=timezone.now().date()).first()
+    
+    # Recent distractions (last 5)
+    recent_distractions_list = DistractionRecord.objects.filter(
+        user=user
+    ).order_by('-timestamp')[:5]
+    
+    # Recent pomodoro sessions for today
+    recent_pomodoros = PomodoroSession.objects.filter(
+        user=user, start_time__gte=today_start
+    ).order_by('-start_time')[:5]
 
     chart_labels = []
     chart_final_scores = []
@@ -139,12 +216,59 @@ def dashboard(request):
     chart_eye = []
     chart_hrv = []
 
-    for record in weekly_fusion_records:
+    # Use DriftRecord for trend chart (last 7 days)
+    weekly_drift_records = DriftRecord.objects.filter(
+        user=user, timestamp__gte=week_ago
+    ).order_by('timestamp')
+
+    for record in weekly_drift_records:
         chart_labels.append(record.timestamp.strftime('%b %d %H:%M'))
-        chart_final_scores.append(record.final_drift_score if record.final_drift_score else 0)
+        chart_final_scores.append(record.final_score if record.final_score else 0)
         chart_reaction.append(record.reaction_score if record.reaction_score else 0)
         chart_eye.append(record.eye_score if record.eye_score else 0)
         chart_hrv.append(record.hrv_score if record.hrv_score else 0)
+
+    # If no DriftRecord exists but all 3 sensor data exist, create/update one
+    if not latest_drift and latest_reaction and latest_eye and latest_hrv:
+        reaction_score_val = latest_reaction.drift_score if latest_reaction.drift_score else 50.0
+        eye_score_val = latest_eye.eye_score if latest_eye.eye_score else 50.0
+        hrv_score_val = latest_hrv.hrv_score if latest_hrv.hrv_score else 50.0
+        
+        # Fusion formula: weighted average
+        final_score_calc = (
+            0.4 * reaction_score_val +
+            0.3 * eye_score_val +
+            0.3 * hrv_score_val
+        )
+        
+        # INVERTED: lower score = more drift
+        if final_score_calc >= 70:
+            cognitive_state = 'focused'
+            warning_level = 'none'
+        elif final_score_calc >= 50:
+            cognitive_state = 'mild_drift'
+            warning_level = 'low'
+        elif final_score_calc >= 30:
+            cognitive_state = 'moderate_drift'
+            warning_level = 'medium'
+        else:
+            cognitive_state = 'severe_drift'
+            warning_level = 'high'
+        
+        # Save/update DriftRecord
+        latest_drift = DriftRecord.objects.create(
+            user=user,
+            reaction_score=reaction_score_val,
+            eye_score=eye_score_val,
+            hrv_score=hrv_score_val,
+            final_score=final_score_calc,
+            cognitive_state=cognitive_state,
+            warning_level=warning_level,
+            reaction_triggered=False,
+            confidence_score=0.7,
+        )
+        if DEBUG:
+            print(f"[DASHBOARD] Created DriftRecord: final_score={final_score_calc}, state={cognitive_state}")
 
     # HRV chart data - last 30 records
     recent_hrv_records = HRVRecord.objects.filter(
@@ -165,13 +289,88 @@ def dashboard(request):
     # Get latest fusion and check for chronic drift
     latest_fusion = FusionRecord.objects.filter(user=user).order_by('-timestamp').first()
     
+    # Phase 7: Auto-run fusion if:
+    # 1. No fusion exists, OR
+    # 2. Latest fusion is older than 5 minutes, OR
+    # 3. New sensor data since last fusion
+    needs_fusion = False
+    if not latest_fusion:
+        needs_fusion = True
+    else:
+        # Check for new sensor data after latest fusion
+        new_reaction = ReactionSession.objects.filter(user=user, timestamp__gt=latest_fusion.timestamp).first()
+        new_eye = EyeRecord.objects.filter(user=user, timestamp__gt=latest_fusion.timestamp).first()
+        new_hrv = HRVRecord.objects.filter(user=user, timestamp__gt=latest_fusion.timestamp).first()
+        if new_reaction or new_eye or new_hrv:
+            needs_fusion = True
+        
+        # Also check if fusion is older than 5 minutes
+        if timezone.now() - latest_fusion.timestamp > timedelta(minutes=5):
+            needs_fusion = True
+    
+    # Auto-run fusion if needed (all sensors have data)
+    if needs_fusion:
+        reaction = ReactionSession.objects.filter(user=user).order_by('-timestamp').first()
+        eye = EyeRecord.objects.filter(user=user).order_by('-timestamp').first()
+        hrv = HRVRecord.objects.filter(user=user).order_by('-timestamp').first()
+        
+        if reaction and eye and hrv:
+            try:
+                if DEBUG:
+                    print(f"[DASHBOARD] Auto-running fusion...")
+                # Use drift_score only if it's > 0, otherwise calculate from mean_rt
+                if reaction.drift_score and reaction.drift_score > 0:
+                    reaction_score = reaction.drift_score
+                elif reaction.mean_rt:
+                    reaction_score = 100 - (reaction.mean_rt / 10)
+                else:
+                    reaction_score = 50
+                reaction_score = max(0, min(100, reaction_score))
+                eye_score = eye.eye_score if eye.eye_score is not None else 50
+                hrv_score = hrv.hrv_score if hrv.hrv_score is not None else 50
+                
+                from core.fusion_engine import calculate_fusion
+                result = calculate_fusion(reaction_score, eye_score, hrv_score)
+                
+                latest_fusion = FusionRecord.objects.create(
+                    user=user,
+                    reaction_score=reaction_score,
+                    eye_score=eye_score,
+                    hrv_score=hrv_score,
+                    final_drift_score=result["final_score"],
+                    confidence_level=result["confidence"],
+                    final_state=result["state"],
+                    trigger_reaction_test=result["trigger"],
+                    intervention_message=result["message"]
+                )
+                if DEBUG:
+                    print(f"[DASHBOARD] Auto-fusion created: {result['state']}")
+            except Exception as e:
+                if DEBUG:
+                    print(f"[DASHBOARD] Auto-fusion error: {e}")
+    
     # Chronic drift check: last 5 records, if 3+ are MODERATE or CONFIRMED
     chronic_state = None
+    latest_fusion = FusionRecord.objects.filter(user=user).order_by('-timestamp').first()
     if latest_fusion:
         recent_5 = FusionRecord.objects.filter(user=user).order_by('-timestamp')[:5]
         drift_count = sum(1 for r in recent_5 if r.final_state in ['MODERATE_DRIFT', 'CONFIRMED_DRIFT'])
         if drift_count >= 3:
             chronic_state = 'CHRONIC_DRIFT'
+    
+    # Phase 6: Get existing validation status (DON'T create new automatically)
+    # Just fetch the latest validation - don't create on every load
+    existing_validation = get_latest_validation_status(user)
+    if DEBUG and existing_validation:
+        print(f"[DASHBOARD] Existing validation: {existing_validation.get('status')}")
+    
+    # Sync FusionRecord with existing validation
+    if existing_validation and latest_fusion:
+        val_status = existing_validation.get('status')
+        latest_fusion.validation_status = val_status
+        latest_fusion.save()
+        if DEBUG:
+            print(f"[DASHBOARD] Synced FusionRecord with: {val_status}")
     
     # State display name mapping
     state_display = {
@@ -180,8 +379,196 @@ def dashboard(request):
         'MODERATE_DRIFT': 'Moderate Drift',
         'CONFIRMED_DRIFT': 'Confirmed Drift',
         'CHRONIC_DRIFT': 'Chronic Drift',
+        'SUSPECTED_DRIFT': 'Suspected Drift',
+        'SUSPENDED_DRIFT': 'Suspended',
+        'INCOMPLETE_DATA': 'Incomplete Data',
+        'No Data': 'No Data',
     }
-    fusion_state_display = state_display.get(latest_fusion.final_state, 'No Data') if latest_fusion else 'No Data'
+    
+    # Phase 6: Get effective state/score from validation (validation OVERRIDES)
+    # This ensures false_alert shows NORMAL, not DRIFT
+    # Get the DriftValidation record for dashboard display
+    drift_validation = get_latest_validation_status(user)
+    
+    # Map validation status to cognitive state - VALIDATION OVERRIDES everything
+    validation_state_map = {
+        'confirmed_drift': 'CONFIRMED_DRIFT',
+        'suspected': 'SUSPECTED_DRIFT',
+        'false_alert': 'STABLE',
+        'normal': 'STABLE',
+    }
+    
+    if drift_validation:
+        # VALIDATION EXISTS - use validation status to determine state
+        val_status = drift_validation.get('status')
+        effective_state = validation_state_map.get(val_status, 'SUSPENDED_DRIFT')
+        # Override chronic state when validation is active
+        chronic_state = None
+        
+        if val_status == 'confirmed_drift':
+            effective_score = latest_fusion.get_effective_score() if latest_fusion else 50.0
+        elif val_status == 'false_alert':
+            effective_score = 15.0  # Safe score
+        elif val_status == 'suspected':
+            effective_score = 40.0  # Mild drift warning
+        else:
+            effective_score = latest_fusion.get_effective_score() if latest_fusion else None
+    elif latest_fusion:
+        # NO VALIDATION - fallback to Phase 5 logic
+        effective_state = latest_fusion.get_effective_state()
+        effective_score = latest_fusion.get_effective_score()
+    else:
+        effective_state = None
+        effective_score = None
+    
+    validation_status = drift_validation.get('status') if drift_validation else None
+    
+    # Phase 7 fix: Calculate current cognitive state from LATEST sensor data ONLY
+    # NOT from old validation records
+    
+    # Determine individual signal states from latest records
+    reaction_signal = 'stable'  # default
+    eye_signal = 'normal'      # default
+    hrv_signal = 'normal'     # default
+    
+    if latest_reaction:
+        reaction_signal = latest_reaction.drift_level if latest_reaction.drift_level else 'stable'
+    
+    if latest_eye:
+        eye_signal = latest_eye.eye_state if latest_eye.eye_state else 'normal'
+    
+    if latest_hrv:
+        hrv_signal = latest_hrv.stress_level if latest_hrv.stress_level else 'normal'
+    
+    # Count abnormal signals (not stable/normal/relaxed)
+    abnormal_count = 0
+    if reaction_signal not in ['stable', 'good', 'normal']:
+        abnormal_count += 1
+    if eye_signal not in ['normal', 'good', 'relaxed', 'stable']:
+        abnormal_count += 1
+    if hrv_signal not in ['relaxed', 'normal', 'good', 'low_stress']:
+        abnormal_count += 1
+    
+    # Phase 7: Calculate current cognitive state from latest sensor signals
+    # Phase 7 fix: Use latest DriftRecord only if ALL THREE sensors have data
+    # If not all sensors exist, show incomplete data
+    
+    # Check if all 3 sensor data exists
+    all_sensors_exist = latest_reaction is not None and latest_eye is not None and latest_hrv is not None
+    
+    if latest_drift and all_sensors_exist:
+        # Use DriftRecord only when all sensors have data
+        cognitive_state_map = {
+            'focused': 'STABLE',
+            'mild_drift': 'MILD_DRIFT',
+            'moderate_drift': 'MODERATE_DRIFT',
+            'severe_drift': 'CONFIRMED_DRIFT',
+        }
+        effective_state = cognitive_state_map.get(latest_drift.cognitive_state, 'STABLE')
+        effective_score = latest_drift.final_score if latest_drift.final_score else 50.0
+        warning_level_from_drift = latest_drift.warning_level if latest_drift.warning_level else 'none'
+        
+        # Calculate level from cognitive_state
+        if latest_drift.cognitive_state == 'focused':
+            warning_level = 0
+        elif latest_drift.cognitive_state == 'mild_drift':
+            warning_level = 1
+        elif latest_drift.cognitive_state == 'moderate_drift':
+            warning_level = 2
+        elif latest_drift.cognitive_state == 'severe_drift':
+            warning_level = 3
+        else:
+            warning_level = 0
+    else:
+        # Either no DriftRecord OR incomplete sensor data
+        if all_sensors_exist:
+            # All sensors have data but no DriftRecord yet - calculate on-the-fly
+            reaction_score_val = latest_reaction.drift_score if latest_reaction.drift_score else 50.0
+            eye_score_val = latest_eye.eye_score if latest_eye.eye_score else 50.0
+            hrv_score_val = latest_hrv.hrv_score if latest_hrv.hrv_score else 50.0
+            
+            # Fusion formula: weighted average
+            effective_score = (
+                0.4 * reaction_score_val +
+                0.3 * eye_score_val +
+                0.3 * hrv_score_val
+            )
+            
+            # Determine cognitive state (INVERTED: lower score = more drift)
+            if effective_score >= 70:
+                effective_state = 'STABLE'
+                warning_level = 0
+            elif effective_score >= 50:
+                effective_state = 'MILD_DRIFT'
+                warning_level = 1
+            elif effective_score >= 30:
+                effective_state = 'MODERATE_DRIFT'
+                warning_level = 2
+            else:
+                effective_state = 'CONFIRMED_DRIFT'
+                warning_level = 3
+        else:
+            # Missing sensor data - incomplete
+            effective_state = 'INCOMPLETE_DATA'
+            effective_score = None
+            warning_level = 0
+    
+    fusion_state_display = state_display.get(effective_state, 'No Data') if effective_state else 'No Data'
+
+    # Debug output
+    if DEBUG:
+        print(f"[PHASE7 DEBUG] all_sensors_exist: {all_sensors_exist}")
+        print(f"[PHASE7 DEBUG] latest_drift: {latest_drift}")
+        print(f"[PHASE7 DEBUG] effective_state: {effective_state}, warning_level: {warning_level}")
+    
+    warning_info = {
+        0: {'level': 'none', 'display': 'Stable', 'color': 'success'},
+        1: {'level': 'low', 'display': 'Low', 'color': 'info'},
+        2: {'level': 'medium', 'display': 'Medium', 'color': 'warning'},
+        3: {'level': 'high', 'display': 'High', 'color': 'danger'},
+    }.get(warning_level, {'level': 'none', 'display': 'Unknown', 'color': 'secondary'})
+
+    # Get warning info and recommendations from DriftRecord ONLY
+    if warning_level == 0 and all_sensors_exist:
+        # Stable/focused
+        recommendations = [
+            "You are focused. Keep going!",
+            "Take regular breaks to maintain focus.",
+        ]
+    elif warning_level == 1:
+        recommendations = [
+            "Stay focused - take short breaks if needed.",
+            "Adjust posture and stay hydrated.",
+        ]
+    elif warning_level == 2:
+        recommendations = [
+            "Take a 5-10 minute break.",
+            "Drink water and stretch.",
+        ]
+    elif warning_level == 3:
+        recommendations = [
+            "Stop session briefly and rest.",
+            "Consider ending for today.",
+        ]
+    elif not all_sensors_exist:
+        # Incomplete data
+        recommendations = [
+            "Complete all three tests to get cognitive state recommendation.",
+            "Run Reaction Test, Eye Tracker, and HRV Sensor.",
+        ]
+    else:
+        recommendations = []
+
+    # Phase 6: Intervention message based on validation status
+    intervention_messages = {
+        'normal': {'message': 'You are focused. Keep going!', 'level': 'info', 'color': 'success'},
+        'false_alert': {'message': 'You are focused. Keep going!', 'level': 'info', 'color': 'success'},
+        'suspected': {'message': 'You might be losing focus. Consider taking a short break.', 'level': 'low', 'color': 'warning'},
+        'confirmed_drift': {'message': 'Cognitive fatigue detected. Take a 10–15 minute break.', 'level': 'high', 'color': 'danger'},
+        'waiting_reaction': {'message': 'Reaction test needed to confirm status.', 'level': 'medium', 'color': 'warning'},
+    }
+    validation_status_key = validation_status if validation_status else 'normal'
+    intervention = intervention_messages.get(validation_status_key, intervention_messages['normal'])
 
     context = {
         'profile': profile,
@@ -194,6 +581,11 @@ def dashboard(request):
         'recent_drifts': recent_drifts,
         'today_pomodoros': today_pomodoros,
         'today_distractions': today_distractions,
+        'focus_minutes': profile.pomodoro_focus_minutes,
+        'break_minutes': profile.pomodoro_break_minutes,
+        'today_goal': today_goal,
+        'recent_distractions': recent_distractions_list,
+        'recent_pomodoros': recent_pomodoros,
         'chart_labels': json.dumps(chart_labels),
         'chart_final_scores': json.dumps(chart_final_scores),
         'chart_reaction': json.dumps(chart_reaction),
@@ -206,8 +598,26 @@ def dashboard(request):
         'hrv_record_count': hrv_count,
         'latest_fusion': latest_fusion,
         'fusion_state_display': fusion_state_display,
+        'effective_score': effective_score,
+        'effective_state': effective_state,
+        'validation_status': validation_status,
+        'drift_validation': drift_validation,
         'chronic_state': chronic_state,
+        'intervention': intervention,
+        # Phase 7: Warning level system
+        'warning_level': warning_level,
+        'warning_info': warning_info,
+        'recommendations': recommendations,
+        'level_display': get_level_display_name(warning_level),
+        # Phase 7: Current state from latest sensor data ONLY
+        'current_state': effective_state if effective_state else 'No Data',
+        'current_level': warning_level,
+        'abnormal_count': abnormal_count,
     }
+    
+    # Phase 7 debug: Print current badge values
+    if DEBUG:
+        print(f"[TEMPLATE DEBUG] current_state: {effective_state}, current_level: {warning_level}, abnormal_count: {abnormal_count}")
 
     # Add baseline info to context for template
     baseline = ReactionSession.get_baseline_for_user(user)
@@ -539,6 +949,8 @@ def api_save_reaction(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
+    print("Saving reaction for:", request.user)
+    
     try:
         data = json.loads(request.body)
         form = ReactionSessionForm(data)
@@ -588,6 +1000,7 @@ def api_save_eye(request):
     API endpoint for saving eye tracking data from OpenCV module.
     Phase 3 - Eye Monitoring Module.
     """
+    print("Saving eye for:", request.user)
     print("="*50)
     print("[EYE SAVE] REQUEST RECEIVED")
     print(f"[EYE SAVE] Method: {request.method}")
@@ -619,7 +1032,17 @@ def api_save_eye(request):
                 notes=form.cleaned_data.get('notes', ''),
             )
             
-            print(f"[EYE SAVE] EyeRecord created with ID: {eye_record.id}")
+            # Phase 7 debug: Print saved data
+            print(f"[EYE SAVE] ====================")
+            print(f"[EYE SAVE] User: {request.user}")
+            print(f"[EYE SAVE] is_authenticated: {request.user.is_authenticated}")
+            print(f"[EYE SAVE] Saved EyeRecord ID: {eye_record.id}")
+            print(f"[EYE SAVE] EyeRecord user: {eye_record.user}")
+            print(f"[EYE SAVE] blink_count: {eye_record.blink_count}")
+            print(f"[EYE SAVE] blink_rate: {eye_record.blink_rate}")
+            print(f"[EYE SAVE] eye_state: {eye_record.eye_state}")
+            print(f"[EYE SAVE] eye_score: {eye_record.eye_score}")
+            print(f"[EYE SAVE] ====================")
             
             # Update DriftRecord with eye score
             try:
@@ -685,6 +1108,8 @@ def api_save_hrv(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
+    print("Saving HRV for:", request.user)
+    
     try:
         data = json.loads(request.body)
         form = HRVRecordForm(data)
@@ -710,6 +1135,18 @@ def api_save_hrv(request):
                 hrv_score=hrv_score,
                 notes=form.cleaned_data.get('notes', ''),
             )
+            
+            # Phase 7 debug: Print saved data
+            print(f"[HRV SAVE] ====================")
+            print(f"[HRV SAVE] User: {request.user}")
+            print(f"[HRV SAVE] is_authenticated: {request.user.is_authenticated}")
+            print(f"[HRV SAVE] Saved HRVRecord ID: {record.id}")
+            print(f"[HRV SAVE] HRVRecord user: {record.user}")
+            print(f"[HRV SAVE] bpm: {record.bpm}")
+            print(f"[HRV SAVE] sdnn: {record.sdnn}")
+            print(f"[HRV SAVE] stress_level: {record.stress_level}")
+            print(f"[HRV SAVE] hrv_score: {record.hrv_score}")
+            print(f"[HRV SAVE] ====================")
 
             try:
                 latest_drift = DriftRecord.objects.filter(
@@ -955,6 +1392,12 @@ def api_save_reaction_session(request):
         data = json.loads(request.body)
         user = request.user
         
+        # Phase 7 debug
+        print(f"[REACTION SAVE] ====================")
+        print(f"[REACTION SAVE] User from request: {user}")
+        print(f"[REACTION SAVE] is_authenticated: {user.is_authenticated}")
+        print(f"[REACTION SAVE] ====================")
+        
         raw_times = data.get('raw_reaction_times', [])
         clean_times = data.get('clean_reaction_times', [])
         false_starts = int(data.get('false_starts', 0))
@@ -962,6 +1405,17 @@ def api_save_reaction_session(request):
         valid_trials = int(data.get('valid_trials', 0))
         total_trials = int(data.get('total_trials', 0))
         notes = data.get('notes', '')
+        
+        # Phase 6: Server-side data cleaning - cap unrealistic reaction times
+        # Valid human reaction time: 150ms - 1200ms
+        MIN_RT = 150
+        MAX_RT = 1200
+        
+        # Cap values outside range to min/max
+        clean_times = [max(MIN_RT, min(MAX_RT, rt)) for rt in clean_times]
+        
+        if DEBUG:
+            print(f"[REACTION] Times after capping: {clean_times}")
         
         if not clean_times or len(clean_times) < 5:
             return JsonResponse({
@@ -988,6 +1442,15 @@ def api_save_reaction_session(request):
             notes=notes,
         )
         
+        # Phase 7 debug
+        print(f"[REACTION SAVE] ====================")
+        print(f"[REACTION SAVE] Saved Session ID: {session.id}")
+        print(f"[REACTION SAVE] Session user: {session.user}")
+        print(f"[REACTION SAVE] mean_rt: {session.mean_rt}")
+        print(f"[REACTION SAVE] drift_level: {session.drift_level}")
+        print(f"[REACTION SAVE] drift_score: {session.drift_score}")
+        print(f"[REACTION SAVE] ====================")
+        
         session.refresh_from_db()
         baseline = ReactionSession.get_baseline_for_user(user)
         
@@ -1011,11 +1474,12 @@ def api_save_reaction_session(request):
                 if latest_drift.eye_score and latest_drift.hrv_score:
                     latest_drift.final_score = (reaction_score + latest_drift.eye_score + latest_drift.hrv_score) / 3
                 
-                if reaction_score < 30:
+                # INVERTED: lower score = more drift
+                if reaction_score >= 70:
                     latest_drift.cognitive_state = 'focused'
-                elif reaction_score < 50:
+                elif reaction_score >= 50:
                     latest_drift.cognitive_state = 'mild_drift'
-                elif reaction_score < 70:
+                elif reaction_score >= 30:
                     latest_drift.cognitive_state = 'moderate_drift'
                 else:
                     latest_drift.cognitive_state = 'severe_drift'
@@ -1024,7 +1488,7 @@ def api_save_reaction_session(request):
                 print(f"[REACTION SAVE] Updated existing DriftRecord ID: {latest_drift.id}")
                 drift_id = latest_drift.id
             else:
-                cognitive_state = 'focused' if reaction_score < 30 else ('mild_drift' if reaction_score < 50 else ('moderate_drift' if reaction_score < 70 else 'severe_drift'))
+                cognitive_state = 'focused' if reaction_score >= 70 else ('mild_drift' if reaction_score >= 50 else ('moderate_drift' if reaction_score >= 30 else 'severe_drift'))
                 drift_record = DriftRecord.objects.create(
                     user=user,
                     reaction_score=reaction_score,
@@ -1067,6 +1531,16 @@ def api_save_reaction_session(request):
             },
             'drift_record_id': drift_id,
         })
+        
+        # Phase 6: Auto-validate after reaction test completes
+        try:
+            validation_result = validate_reaction_confirmation(user)
+            if DEBUG:
+                print(f"[REACTION] Validation result: {validation_result}")
+                print(f"[REACTION] Status: {validation_result.get('status')}, Drift confirmed: {validation_result.get('drift_confirmed')}")
+        except Exception as e:
+            if DEBUG:
+                print(f"[REACTION] Validation error: {e}")
         
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
@@ -1181,3 +1655,261 @@ def run_fusion(request):
     )
 
     return JsonResponse(result)
+
+
+# =============================================================================
+# PHASE 6 PART 1: SMART VALIDATION ENGINE API ENDPOINTS
+# =============================================================================
+
+@login_required
+def api_evaluate_suspected_drift(request):
+    """
+    API endpoint to evaluate suspected cognitive drift.
+    
+    Checks:
+    - User study hours configuration
+    - Latest eye monitoring result
+    - Latest HRV monitoring result
+    
+    Returns JSON with drift assessment and whether reaction test is required.
+    
+    Where to connect: Phase 6 Part 2 intervention module
+    """
+    result = evaluate_suspected_drift(request.user)
+    return JsonResponse(result)
+
+
+@login_required
+def api_validate_reaction_confirmation(request):
+    """
+    API endpoint to validate drift after reaction test completion.
+    
+    Compares latest reaction result with user's personalized baseline.
+    Determines if drift is confirmed or was a false alert.
+    
+    Returns JSON with validation result.
+    """
+    result = validate_reaction_confirmation(request.user)
+    return JsonResponse(result)
+
+
+@login_required
+def api_validation_status(request):
+    """
+    API endpoint to get current validation status.
+    
+    Returns the latest validation record for dashboard display.
+    """
+    status = get_latest_validation_status(request.user)
+    if status is None:
+        return JsonResponse({'status': 'no_validation', 'message': 'No validation records yet'})
+    return JsonResponse(status)
+
+
+# =============================================================================
+# PHASE 8 - Productivity & Behavior Layer
+# =============================================================================
+
+@login_required
+def api_start_pomodoro(request):
+    """
+    Start a new Pomodoro session (focus or break).
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        session_type = data.get('session_type', 'focus')  # focus or break
+        focus_minutes = int(data.get('focus_minutes', 25))
+        break_minutes = int(data.get('break_minutes', 5))
+        
+        # Create new PomodoroSession
+        pomodoro = PomodoroSession.objects.create(
+            user=request.user,
+            start_time=timezone.now(),
+            focus_minutes=focus_minutes,
+            break_minutes=break_minutes,
+            completed=False,
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'session_id': pomodoro.id,
+            'session_type': session_type,
+            'message': f'{session_type.title()} session started!'
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+
+@login_required
+def api_complete_pomodoro(request):
+    """
+    Complete a Pomodoro session - creates and marks as complete.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        session_type = data.get('session_type', 'focus')
+        duration_minutes = int(data.get('duration_minutes', 25))
+        
+        # Create and complete the session in one go
+        pomodoro = PomodoroSession.objects.create(
+            user=request.user,
+            start_time=timezone.now() - timedelta(minutes=duration_minutes),
+            end_time=timezone.now(),
+            focus_minutes=duration_minutes,
+            break_minutes=5,
+            completed=True,
+        )
+        
+        # Get today's completed pomodoros count
+        today = timezone.now().date()
+        today_count = PomodoroSession.objects.filter(
+            user=request.user,
+            completed=True,
+            start_time__date=today
+        ).count()
+        
+        return JsonResponse({
+            'success': True,
+            'pomodoro_id': pomodoro.id,
+            'pomodoros_today': today_count,
+            'message': 'Pomodoro completed!'
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+
+@login_required
+def goal_settings(request):
+    """
+    Goal settings page - view and manage daily goals.
+    """
+    user = request.user
+    today = timezone.now().date()
+    
+    # Get today's goal
+    today_goal = GoalRecord.objects.filter(user=user, date=today).first()
+    
+    # Get all goals for this user
+    all_goals = GoalRecord.objects.filter(user=user).order_by('-date')[:10]
+    
+    context = {
+        'today_goal': today_goal,
+        'all_goals': all_goals,
+    }
+    return render(request, 'core/goal_settings.html', context)
+
+
+@login_required
+def api_add_goal(request):
+    """
+    Add a new daily goal.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        goal_title = data.get('goal_title')
+        target_value = float(data.get('target_value', 60))  # minutes
+        subject = data.get('subject', 'Study')
+        
+        today = timezone.now().date()
+        
+        # Check if goal already exists for today
+        existing = GoalRecord.objects.filter(user=request.user, date=today).first()
+        if existing:
+            existing.goal_title = goal_title
+            existing.target_value = target_value
+            existing.save()
+            goal = existing
+        else:
+            goal = GoalRecord.objects.create(
+                user=request.user,
+                date=today,
+                goal_title=goal_title,
+                target_value=target_value,
+                achieved_value=0,
+            )
+        
+        return JsonResponse({
+            'success': True,
+            'goal_id': goal.id,
+            'goal_title': goal.goal_title,
+            'target_value': goal.target_value,
+            'completion_percent': goal.completion_percent,
+            'status': goal.status,
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+
+@login_required
+def api_complete_goal(request, goal_id):
+    """
+    Mark a goal as complete.
+    """
+    try:
+        goal = GoalRecord.objects.get(id=goal_id, user=request.user)
+        goal.achieved_value = goal.target_value
+        goal.completion_percent = 100
+        goal.status = 'completed'
+        goal.save()
+        
+        return JsonResponse({
+            'success': True,
+            'goal_id': goal.id,
+            'status': goal.status,
+        })
+        
+    except GoalRecord.DoesNotExist:
+        return JsonResponse({'error': 'Goal not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+
+@login_required
+def api_log_distraction(request):
+    """
+    Log a distraction occurrence.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        distraction_type = data.get('distraction_type', 'other')
+        distraction_name = data.get('distraction_name', '')
+        notes = data.get('notes', '')
+        
+        distraction = DistractionRecord.objects.create(
+            user=request.user,
+            distraction_name=distraction_name or distraction_type,
+            distraction_type=distraction_type,
+            notes=notes,
+        )
+        
+        # Get today's distraction count
+        today = timezone.now().date()
+        today_count = DistractionRecord.objects.filter(
+            user=request.user,
+            timestamp__date=today
+        ).count()
+        
+        return JsonResponse({
+            'success': True,
+            'distraction_id': distraction.id,
+            'distractions_today': today_count,
+            'message': 'Distraction logged!'
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)

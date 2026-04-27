@@ -184,10 +184,11 @@ main {
 
 /* Alert Colors */
 .bg-none { background-color: transparent; }
-.bg-low { background-color: #0dcaf0; }
-.bg-medium { background-color: #ffc107; }
-.bg-high { background-color: #fd7e14; }
-.bg-critical { background-color: #dc3545; }
+.bg-low { background-color: #ffc107; }       /* suspected - yellow/warning */
+.bg-medium { background-color: #fd7e14; }   /* medium - orange */
+.bg-high { background-color: #dc3545; }       /* confirmed - red/danger */
+.bg-critical { background-color: #6f0d23; }   /* critical - dark red */
+.bg-info { background-color: #0dcaf0; }       /* normal/stable - cyan */
 
 /* Table Styles */
 .table {

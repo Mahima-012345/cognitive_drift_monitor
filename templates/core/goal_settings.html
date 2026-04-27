@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Goal Settings - Cognitive Drift Detection{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <h2><i class="fas fa-bullseye me-2"></i>Goal Settings</h2>
+    <p class="text-muted">Set and track your daily study goals.</p>
+    
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Set Today's Goal</h5>
+                </div>
+                <div class="card-body">
+                    <form id="goalForm">
+                        <div class="mb-3">
+                            <label class="form-label">Goal Title</label>
+                            <input type="text" class="form-control" id="goalTitle" placeholder="e.g., Complete Java exercises" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Subject</label>
+                            <input type="text" class="form-control" id="goalSubject" placeholder="e.g., Java, Python, Math">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Target Minutes</label>
+                            <input type="number" class="form-control" id="goalTarget" value="60" min="1" max="480">
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save me-1"></i>Save Goal
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            {% if today_goal %}
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">Today's Goal</h5>
+                </div>
+                <div class="card-body text-center">
+                    <h4>{{ today_goal.goal_title }}</h4>
+                    <p class="text-muted">{{ today_goal.target_value|floatformat:0 }} minutes</p>
+                    
+                    <div class="progress mb-3" style="height: 25px;">
+                        <div class="progress-bar bg-success" role="progressbar" 
+                             style="width: {{ today_goal.completion_percent }}%">
+                            {{ today_goal.completion_percent|floatformat:0 }}%
+                        </div>
+                    </div>
+                    
+                    {% if today_goal.status != 'completed' %}
+                    <button class="btn btn-success" onclick="completeGoal({{ today_goal.id }})">
+                        <i class="fas fa-check me-1"></i>Mark Complete
+                    </button>
+                    {% else %}
+                    <span class="badge bg-success"><i class="fas fa-check me-1"></i>Completed!</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="card">
+                <div class="card-body text-center text-muted py-5">
+                    <i class="fas fa-bullseye fa-3x mb-3"></i>
+                    <p>No goal set for today</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="mt-4">
+        <h5>Recent Goals</h5>
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Goal</th>
+                    <th>Target</th>
+                    <th>Progress</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for goal in all_goals %}
+                <tr>
+                    <td>{{ goal.date }}</td>
+                    <td>{{ goal.goal_title }}</td>
+                    <td>{{ goal.target_value|floatformat:0 }} min</td>
+                    <td>
+                        <div class="progress" style="height: 20px;">
+                            <div class="progress-bar bg-{% if goal.completion_percent >= 100 %}success{% else %}warning{% endif %}" 
+                                 style="width: {{ goal.completion_percent }}%">
+                                {{ goal.completion_percent|floatformat:0 }}%
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="badge bg-{% if goal.status == 'completed' %}success{% elif goal.status == 'in_progress' %}info{% else %}secondary{% endif %}">
+                            {{ goal.get_status_display }}
+                        </span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted">No goals yet</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+document.getElementById('goalForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const goal_title = document.getElementById('goalTitle').value;
+    const subject = document.getElementById('goalSubject').value;
+    const target_value = parseFloat(document.getElementById('goalTarget').value);
+    
+    fetch('/api/add-goal/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify({
+            goal_title: goal_title,
+            subject: subject,
+            target_value: target_value
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    });
+});
+
+function completeGoal(goalId) {
+    fetch('/api/complete-goal/' + goalId + '/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    });
+}
+</script>
+{% endblock %}

@@ -31,13 +31,29 @@ import os
 # CONFIGURATION
 # =============================================================================
 
-SESSION_DURATION = 30
+SESSION_DURATION = 30  # Summary interval in seconds (not session duration)
 
-EAR_THRESHOLD = 0.23
-CONSEC_FRAMES = 2
-BLINK_COOLDOWN = 0.20
-MIN_BLINK_DURATION = 0.03
-MAX_BLINK_DURATION = 0.50
+# Phase 7: Blink Detection Sensitivity - Tunable
+EAR_THRESHOLD = 0.23        # Base threshold (overridden by adaptive)
+EYE_AR_CONSEC_FRAMES = 1    # Reduced: 1-2 frames for fast natural blinks
+BLINK_COOLDOWN = 0.15        # Debounce to avoid double counting (150ms)
+MIN_BLINK_DURATION = 0.05  # Reduced: capture fast blinks (50ms)
+MAX_BLINK_DURATION = 0.60  # Natural blink max (600ms)
+EAR_DEBUG = True           # Show live EAR values
+
+# Phase 7: Adaptive blink detection variables
+baseline_open_ear = None
+adaptive_threshold = None
+calibration_samples = []
+calibration_duration = 5.0  # 5 seconds calibration
+is_calibrating = True
+calib_start_time = None
+
+# Blink state machine states
+BLINK_STATE_OPEN = "open"
+BLINK_STATE_CLOSED = "closed_candidate"
+BLINK_STATE_CONFIRMED = "confirmed"
+blink_state = BLINK_STATE_OPEN
 
 DJANGO_API_URL = "http://127.0.0.1:8000/api/save-eye/"
 DJANGO_USER = None  # Set at runtime
@@ -70,14 +86,15 @@ def calculate_ear(eye_points):
 
 
 def classify_eye_state(blink_rate):
+    # Phase 7: Classification based on 30-second window blink rate
     if blink_rate < 15:
-        return 'drowsy'
+        return 'drowsy'  # Too low = sleepy/tired
     elif blink_rate <= 20:
-        return 'normal'
+        return 'normal'  # Healthy range
     elif blink_rate <= 30:
-        return 'fatigue'
+        return 'fatigue'  # Mild eye strain from too much focus
     else:
-        return 'eye_strain'
+        return 'eye_strain'  # Excessive blinking = eye strain
 
 
 def calculate_eye_score(state):
@@ -202,18 +219,35 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     print("[OK] Webcam ready!")
     
-    # Initialize tracking variables
-    blink_count = 0
-    blink_durations = []
-    
-    closed_frames = 0
+    # Main tracking variables (reset every interval)
+    total_blinks = 0       # All blinks since program started
+    window_blinks = 0       # Blinks in current 30-second window
+    window_blink_durations = []  # Blink durations for current window
     blink_in_progress = False
     blink_start_time = 0
     last_blink_time = 0
-    
-    session_start = time.time()
     current_ear = 0.25
     ear_samples = []
+    window_start_time = None   # Track start of current 30-second window
+    
+    # Phase 7: Initialize adaptive blink detection
+    
+    # Phase 7: Initialize adaptive blink detection
+    baseline_open_ear = None
+    adaptive_threshold = None
+    calibration_samples = []
+    is_calibrating = True
+    calib_start_time = None
+    BLINK_STATE_OPEN = "open"
+    BLINK_STATE_CLOSED = "closed_candidate"
+    blink_state = BLINK_STATE_OPEN
+    
+    # Timing control
+    session_start = time.time()
+    last_summary_time = session_start
+    session_id = 0  # Counter for duplicate prevention
+    
+    posted_windows = set()  # Track posted window IDs to prevent duplicates
     
     # Get Django credentials
     print()
@@ -226,6 +260,7 @@ def main():
     if not django_username or not django_password:
         print("[WARN] Empty credentials - continuing without Django")
         django_connected = False
+        session = None
     else:
         # Connect to Django
         session = requests.Session()
@@ -235,12 +270,14 @@ def main():
             print("[INFO] Continuing without Django (local tracking still works)")
     
     print()
-    print(f"[INFO] Session will run for {SESSION_DURATION} seconds...")
-    print("[INFO] Press 'q' to quit early")
+    print("[INFO] Continuous mode started. Press 'q' to quit.")
+    print(f"[INFO] Summary will be posted every {SESSION_DURATION} seconds.")
+    print(f"[INFO] EAR threshold: {EAR_THRESHOLD}, Consec frames: {EYE_AR_CONSEC_FRAMES}")
     print()
     
-    # Main loop
-    while True:
+    # Main tracking loop
+    running = True
+    while running:
         ret, frame = cap.read()
         if not ret:
             print("[ERROR] Failed to read frame")
@@ -248,6 +285,7 @@ def main():
         
         current_time = time.time()
         elapsed = current_time - session_start
+        elapsed_since_last_summary = current_time - last_summary_time
         timestamp_ms = int(current_time * 1000)
         
         # Process with MediaPipe
@@ -292,40 +330,92 @@ def main():
                 for pt in right_eye:
                     cv2.circle(frame, pt, 2, (0, 255, 0), -1)
         
-        # Blink detection logic
+        # Phase 7: Improved blink detection logic
+        # Adaptive calibration (first 5 seconds)
+        if is_calibrating:
+            if calib_start_time is None:
+                calib_start_time = current_time
+            calib_elapsed = current_time - calib_start_time
+            
+            if eyes_detected and current_ear > 0.20:
+                calibration_samples.append(current_ear)
+            
+            if calib_elapsed >= calibration_duration and calibration_samples:
+                baseline_open_ear = np.mean(calibration_samples)
+                adaptive_threshold = baseline_open_ear * 0.80  # 20% drop = blink
+                is_calibrating = False
+                print(f"[CALIB] Baseline EAR: {baseline_open_ear:.3f}, Adaptive threshold: {adaptive_threshold:.3f}")
+            elif EAR_DEBUG and int(calib_elapsed) % 1 == 0:
+                print(f"[CALIB] {calib_elapsed:.1f}s / {calibration_duration}s...")
+        
+        # Blink detection with state machine
         if eyes_detected:
-            if current_ear < EAR_THRESHOLD:
-                # Eye is closed - track consecutive closed frames
-                if not blink_in_progress:
-                    # Start tracking this blink immediately
-                    blink_in_progress = True
+            # Use adaptive threshold if available, otherwise fallback to base
+            use_threshold = adaptive_threshold if adaptive_threshold else EAR_THRESHOLD
+            
+            # Debug output
+            if EAR_DEBUG and len(ear_samples) % 15 == 0:
+                base_val = f"{baseline_open_ear:.3f}" if baseline_open_ear else "N/A"
+                print(f"[EAR] {current_ear:.3f} | thr: {use_threshold:.3f} | base: {base_val} | state: {blink_state}")
+            
+            # State machine
+            if blink_state == BLINK_STATE_OPEN:
+                # Check for eye closure (EAR drops below adaptive threshold)
+                drop_ratio = current_ear / baseline_open_ear if baseline_open_ear else 1.0
+                threshold_for_check = use_threshold if baseline_open_ear else EAR_THRESHOLD
+                if current_ear < threshold_for_check or (baseline_open_ear and drop_ratio < 0.88):  # 12% drop
+                    blink_state = BLINK_STATE_CLOSED
                     blink_start_time = current_time
-                    closed_frames = 1
-                else:
-                    closed_frames += 1
-                
-            else:
-                # Eye is open
-                if blink_in_progress:
+            
+            elif blink_state == BLINK_STATE_CLOSED:
+                # Eye might be blinking - check if it opened back up
+                if current_ear >= use_threshold:
                     duration = current_time - blink_start_time
                     duration_ms = duration * 1000
                     
-                    # Check cooldown to avoid double-counting rapid blinks
-                    if (current_time - last_blink_time) >= BLINK_COOLDOWN:
-                        if MIN_BLINK_DURATION <= duration <= MAX_BLINK_DURATION:
-                            blink_count += 1
-                            blink_durations.append(duration_ms)
+                    # Valid blink duration: 50ms to 600ms
+                    if MIN_BLINK_DURATION <= duration <= MAX_BLINK_DURATION:
+                        # Debounce check
+                        if current_time - last_blink_time >= BLINK_COOLDOWN:
+                            total_blinks += 1
+                            window_blinks += 1
+                            window_blink_durations.append(duration_ms)
                             last_blink_time = current_time
-                            rate = (blink_count / max(0.1, elapsed)) * 60
-                            print(f"[BLINK #{blink_count}] {duration_ms:.0f}ms | {rate:.1f}/min")
+                            # Rate based on current window only
+                            window_elapsed = current_time - (window_start_time or session_start)
+                            window_elapsed = max(0.1, window_elapsed)
+                            rate = (window_blinks / window_elapsed) * 60
+                            print(f"[BLINK #{total_blinks}] {duration_ms:.0f}ms | win rate: {rate:.1f}/min | EAR={current_ear:.3f}")
                     
-                    blink_in_progress = False
-                
-                closed_frames = 0
+                    blink_state = BLINK_STATE_OPEN
+                else:
+                    # Still closed - check for timeout (max duration exceeded)
+                    duration = current_time - blink_start_time
+                    if duration > MAX_BLINK_DURATION:
+                        blink_state = BLINK_STATE_OPEN  # Reset without counting
+
+        # Initialize window start time at program start
+        if window_start_time is None:
+            window_start_time = session_start
         
-        # Calculate metrics
-        rate = (blink_count / max(0.1, elapsed)) * 60
-        avg_duration = np.mean(blink_durations) if blink_durations else 0
+        # Phase 7: Keyboard test - press 'b' to simulate blink
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('b'):
+            # Simulate a manual blink
+            total_blinks += 1
+            window_blinks += 1
+            window_blink_durations.append(150)  # 150ms typical blink
+            last_blink_time = current_time
+            window_elapsed = current_time - (window_start_time or session_start)
+            window_elapsed = max(0.1, window_elapsed)
+            rate = (window_blinks / window_elapsed) * 60
+            print(f"[BLINK #{total_blinks}] 150ms (KEYBOARD TEST) | win rate: {rate:.1f}/min")
+        
+        # Calculate metrics using 30-second window
+        window_elapsed = current_time - (window_start_time or session_start)
+        window_elapsed = max(0.1, window_elapsed)
+        rate = (window_blinks / window_elapsed) * 60  # Rate based on current 30-sec window
+        avg_duration = np.mean(window_blink_durations) if window_blink_durations else 0
         eye_status = classify_eye_state(rate)
         eye_score = calculate_eye_score(eye_status)
         
@@ -334,7 +424,7 @@ def main():
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         cv2.putText(frame, f"EAR: {current_ear:.3f}", (10, 55),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame, f"Blinks: {blink_count}", (10, 85),
+        cv2.putText(frame, f"Window Blinks: {window_blinks}", (10, 85),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.putText(frame, f"Rate: {rate:.1f}/min", (10, 115),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
@@ -343,16 +433,13 @@ def main():
         cv2.putText(frame, f"Score: {eye_score}", (10, 175),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
-        remaining = max(0, SESSION_DURATION - int(elapsed))
-        cv2.putText(frame, f"Time: {remaining}s", (10, 205),
+        elapsed_total = int(current_time - session_start)
+        cv2.putText(frame, f"Elapsed: {elapsed_total}s", (10, 205),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         
-        if not face_detected:
-            cv2.putText(frame, "No face detected", (10, 235),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        elif not eyes_detected:
-            cv2.putText(frame, "Eye landmarks not detected", (10, 235),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        next_summary_in = max(0, SESSION_DURATION - int(elapsed_since_last_summary))
+        cv2.putText(frame, f"Next: {next_summary_in}s", (10, 230),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         
         state_colors = {
             'normal': (0, 255, 0),
@@ -371,58 +458,73 @@ def main():
         
         # Non-blocking key check
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('q') or elapsed >= SESSION_DURATION:
-            break
+        if key == ord('q'):
+            running = False
+            continue
+        
+        # Check if 30-second summary interval reached
+        elapsed_since_last_summary = current_time - last_summary_time
+        if elapsed_since_last_summary >= SESSION_DURATION:
+            session_id += 1
+            # Use window_blinks for 30-second summary
+            interval_rate = window_blinks * 2  # 30 sec * 2 = per minute
+            avg_duration = np.mean(window_blink_durations) if window_blink_durations else 0
+            interval_state = classify_eye_state(interval_rate)
+            interval_score = calculate_eye_score(interval_state)
+            fatigue_flag = interval_state in ['drowsy', 'fatigue', 'eye_strain']
+            
+            print()
+            print("=" * 60)
+            print(f"  {SESSION_DURATION}-SECOND SUMMARY #{session_id}")
+            print("=" * 60)
+            print(f"  Window Duration: {SESSION_DURATION}s")
+            print(f"  Window Blinks:   {window_blinks}")
+            print(f"  Total Blinks:    {total_blinks}")
+            print(f"  Blink Rate:    {interval_rate:.1f}/min")
+            print(f"  Avg Duration: {avg_duration:.0f}ms")
+            print(f"  Eye State:     {interval_state}")
+            print(f"  Eye Score:    {interval_score}")
+            print(f"  Fatigue:     {'Yes' if fatigue_flag else 'No'}")
+            print("=" * 60)
+            
+            # POST to Django (with duplicate prevention)
+            if django_connected:
+                window_id = f"{session_id}_{int(current_time)}"
+                if window_id not in posted_windows:
+                    posted_windows.add(window_id)
+                    print("[INFO] Sending data to Django...")
+                    
+                    import json
+                    post_data = {
+                        'ear': round(current_ear, 4),
+                        'blink_count': window_blinks,
+                        'blink_duration_avg': round(avg_duration, 2),
+                        'blink_rate': round(interval_rate, 2),
+                        'eye_state': interval_state,
+                        'eye_score': interval_score,
+                        'fatigue_flag': fatigue_flag,
+                        'ear_samples': json.dumps(ear_samples[-30:] if ear_samples else []),
+                        'notes': f"Window {session_id}: {SESSION_DURATION}s | {window_blinks} blinks",
+                    }
+                    
+                    print(f"[DEBUG] Posting: blink_count={window_blinks}, blink_rate={interval_rate:.1f}, eye_state={interval_state}, eye_score={interval_score}")
+                    post_to_django(session, post_data)
+                else:
+                    print("[DEBUG] Window already posted, skipping duplicate.")
+            
+            # Reset window counters for next window
+            window_blinks = 0
+            window_blink_durations = []
+            window_start_time = current_time
+            last_summary_time = current_time
     
     # Cleanup
+    cv2.waitKey(1)  # Process any pending window events
     cap.release()
     cv2.destroyAllWindows()
+    cv2.waitKey(1)  # Ensure windows are destroyed
     
-    # Session summary
-    final_duration = time.time() - session_start
-    final_rate = (blink_count / max(0.1, final_duration)) * 60
-    final_avg_dur = np.mean(blink_durations) if blink_durations else 0
-    final_state = classify_eye_state(final_rate)
-    final_score = calculate_eye_score(final_state)
-    fatigue_flag = final_state in ['drowsy', 'fatigue', 'eye_strain']
-    
-    print()
-    print("=" * 60)
-    print("  SESSION SUMMARY")
-    print("=" * 60)
-    print(f"  Duration:     {int(final_duration)}s")
-    print(f"  Total Blinks: {blink_count}")
-    print(f"  Blink Rate:   {final_rate:.1f}/min")
-    print(f"  Avg Duration: {final_avg_dur:.0f}ms")
-    print(f"  Eye State:    {final_state}")
-    print(f"  Eye Score:    {final_score}")
-    print(f"  Fatigue:      {'Yes' if fatigue_flag else 'No'}")
-    print("=" * 60)
-    print()
-    
-    # POST to Django ONE TIME after session ends
-    if django_connected:
-        print("[INFO] Sending data to Django...")
-        
-        import json
-        post_data = {
-            'ear': round(current_ear, 4),
-            'blink_count': blink_count,
-            'blink_duration_avg': round(final_avg_dur, 2),
-            'blink_rate': round(final_rate, 2),
-            'eye_state': final_state,
-            'eye_score': final_score,
-            'fatigue_flag': fatigue_flag,
-            'ear_samples': json.dumps(ear_samples[-30:] if ear_samples else []),
-            'notes': f"Session: {int(final_duration)}s | {blink_count} blinks",
-        }
-        
-        print(f"[DEBUG] Posting: blink_count={blink_count}, blink_rate={final_rate:.1f}, eye_state={final_state}, eye_score={final_score}")
-        post_to_django(session, post_data)
-    else:
-        print("[INFO] Skipping Django POST (not connected)")
-    
-    print("[INFO] Eye tracker closed.")
+    print("[INFO] Eye tracker stopped.")
 
 
 if __name__ == "__main__":

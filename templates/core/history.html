@@ -178,7 +178,7 @@
                                             <td>{{ record.blink_rate|floatformat:1 }}/min</td>
                                             <td>{{ record.blink_duration|floatformat:0 }}ms</td>
                                             <td>
-                                                <span class="badge bg-{% if record.eye_state == 'open' %}success{% elif record.eye_state == 'closed' %}info{% elif record.eye_state == 'drowsy' %}warning{% else %}danger{% endif %}">
+                                                <span class="badge {% if record.eye_state == 'normal' %}bg-success{% elif record.eye_state == 'drowsy' %}bg-warning text-dark{% elif record.eye_state == 'fatigue' or record.eye_state == 'eye_strain' %}bg-danger{% else %}bg-secondary{% endif %}">
                                                     {{ record.get_eye_state_display }}
                                                 </span>
                                             </td>

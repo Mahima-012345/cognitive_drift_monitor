@@ -53,6 +53,14 @@
                         </p>
                     </div>
                     <div class="text-end">
+                        {% if effective_score is not None %}
+                        <div class="mb-1">
+                            <small class="text-muted">Score:</small>
+                            <span class="badge bg-{% if effective_score >= 70 %}success{% elif effective_score >= 30 %}warning{% else %}danger{% endif %}">
+                                {{ effective_score|floatformat:0 }}%
+                            </span>
+                        </div>
+                        {% endif %}
                         {% if chronic_state %}
                             <span class="state-badge badge bg-dark">{{ chronic_state }}</span>
                         {% elif latest_fusion %}
@@ -67,9 +75,14 @@
                         {% else %}
                             <span class="state-badge badge bg-secondary">No Data</span>
                         {% endif %}
+                        {% if warning_level > 0 %}
+                        <span class="badge bg-{% if warning_level == 1 %}info{% elif warning_level == 2 %}warning{% else %}danger{% endif %} ms-1">
+                            Level {{ warning_level }}
+                        </span>
+                        {% endif %}
                         {% if unacknowledged_warnings > 0 %}
-                        <span class="badge bg-danger warning-badge">
-                            <i class="fas fa-exclamation-triangle me-1"></i>{{ unacknowledged_warnings }} Warning{{ unacknowledged_warnings|pluralize }}
+                        <span class="badge bg-danger warning-badge ms-1">
+                            <i class="fas fa-exclamation-triangle me-1"></i>{{ unacknowledged_warnings }}
                         </span>
                         {% endif %}
                     </div>
@@ -77,6 +90,53 @@
             </div>
         </div>
     </div>
+
+    <!-- Recommendations Section - Right after welcome -->
+    {% if recommendations and warning_level > 0 %}
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-gradient text-white 
+                    {% if warning_level == 1 %}bg-info
+                    {% elif warning_level == 2 %}bg-warning text-dark
+                    {% elif warning_level == 3 %}bg-danger
+                    {% else %}bg-dark{% endif %}">
+                    <h5 class="mb-0">
+                        <i class="fas fa-lightbulb me-2"></i>
+                        Recommendations - Level {{ warning_level }}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <ul class="list-unstyled mb-0">
+                                {% for rec in recommendations %}
+                                <li class="mb-2">
+                                    <i class="fas fa-check-circle me-2 
+                                        {% if warning_level == 1 %}text-info
+                                        {% elif warning_level == 2 %}text-warning
+                                        {% elif warning_level == 3 %}text-danger{% endif %}">
+                                    </i>{{ rec }}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            {% if warning_level >= 2 %}
+                            <button class="btn btn-{% if warning_level == 3 %}danger{% else %}warning{% endif %}" onclick="pomodoroApplyDriftBreak()">
+                                <i class="fas fa-coffee me-1"></i>Start Break
+                            </button>
+                            {% endif %}
+                            <a href="{% url 'reaction_test' %}" class="btn btn-outline-danger ms-1">
+                                <i class="fas fa-redo me-1"></i>Retake Test
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Quick Stats Cards -->
     <div class="row g-4 mb-4">
@@ -345,14 +405,14 @@
                     </h5>
                 </div>
                 <div class="card-body">
-                    <div class="chart-container">
+                    <div class="chart-container" style="height: 300px; min-height: 300px;">
                         <canvas id="driftChart"></canvas>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="col-lg-4">
+<div class="col-lg-4">
             <div class="card h-100">
                 <div class="card-header bg-white">
                     <h5 class="mb-0">
@@ -361,19 +421,81 @@
                     </h5>
                 </div>
                 <div class="card-body">
+                    <!-- Daily Goal -->
                     <div class="mb-3">
-                        <label class="form-label text-muted small">Pomodoro</label>
-                        <div class="d-flex align-items-center">
-                            <span class="me-2">
-                                {% if profile.pomodoro_enabled %}
-                                    <i class="fas fa-check-circle text-success"></i>
-                                {% else %}
-                                    <i class="fas fa-times-circle text-secondary"></i>
-                                {% endif %}
-                            </span>
-                            <span>{{ profile.pomodoro_focus_minutes }}min focus / {{ profile.pomodoro_break_minutes }}min break</span>
+                        <label class="form-label text-muted small">Today's Goal</label>
+                        {% if today_goal %}
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="text-truncate" style="max-width: 150px;">{{ today_goal.goal_title }}</span>
+                                <span class="badge bg-{% if today_goal.completion_percent >= 100 %}success{% elif today_goal.completion_percent > 0 %}info{% else %}secondary{% endif %}">
+                                    {{ today_goal.completion_percent|floatformat:0 }}%
+                                </span>
+                            </div>
+                            <div class="progress mt-1" style="height: 8px;">
+                                <div class="progress-bar bg-{% if today_goal.completion_percent >= 100 %}success{% else %}info{% endif %}" 
+                                     style="width: {{ today_goal.completion_percent }}%"></div>
+                            </div>
+                        {% else %}
+                            <p class="mb-0 text-muted small">No goal set</p>
+                        {% endif %}
+                        <a href="{% url 'goal_settings' %}" class="btn btn-sm btn-link ps-0 mt-1">
+                            <i class="fas fa-edit me-1"></i>Goal Settings
+                        </a>
+                    </div>
+                    <hr>
+                    <!-- Pomodoro Timer -->
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">Pomodoro Timer</label>
+                        <div class="text-center">
+                            <!-- Drift Warning -->
+                            {% if effective_state and effective_state != 'STABLE' %}
+                            <div class="alert alert-warning py-1 px-2 mb-2 small" id="driftWarning">
+                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                Drift detected. Break recommended.
+                            </div>
+                            {% endif %}
+                            <div id="pomodoroModeLabel" class="badge bg-primary mb-2">Focus</div>
+                            <div id="pomodoroTimerDisplay" class="display-4 mb-2">{{ focus_minutes|default:25 }}:00</div>
+                            <!-- Completion Message -->
+                            <div id="pomodoroMessage" class="small mb-2" style="min-height: 20px;"></div>
+                            <div class="btn-group btn-group-sm mb-2">
+                                <button type="button" class="btn btn-outline-primary" id="pomodoroFocusBtn">Focus</button>
+                                <button type="button" class="btn btn-outline-success" id="pomodoroBreakBtn">Break</button>
+                            </div>
+                            <div class="btn-group btn-group-sm mb-2">
+                                <button type="button" class="btn btn-success" id="pomodoroStartBtn">
+                                    <i class="fas fa-play"></i> Start
+                                </button>
+                                <button type="button" class="btn btn-warning" id="pomodoroPauseBtn" disabled>
+                                    <i class="fas fa-pause"></i> Pause
+                                </button>
+                                <button type="button" class="btn btn-secondary" id="pomodoroResetBtn">
+                                    <i class="fas fa-redo"></i> Reset
+                                </button>
+                            </div>
                         </div>
                     </div>
+                    <hr>
+                    <!-- Stats -->
+                    <div class="row text-center">
+                        <div class="col-6">
+                            <div class="h4 mb-0 text-primary" id="pomodoroTodayCount">{{ today_pomodoros }}</div>
+                            <small class="text-muted">Pomodoros Today</small>
+                        </div>
+                        <div class="col-6">
+                            <div class="h4 mb-0 text-warning" id="distractionsTodayCount">{{ today_distractions }}</div>
+                            <small class="text-muted">Distractions</small>
+                        </div>
+                    </div>
+                    <hr>
+                    <!-- Log Distraction Button -->
+                    <div class="mt-2">
+                        <button class="btn btn-outline-warning btn-sm w-100" id="logDistractionBtn" onclick="logDistraction()">
+                            <i class="fas fa-plus me-1"></i>Log Distraction
+                        </button>
+                    </div>
+                    <hr>
+                    <!-- Warnings Toggle -->
                     <div class="mb-3">
                         <label class="form-label text-muted small">Warnings</label>
                         <div class="d-flex align-items-center">
@@ -385,21 +507,6 @@
                                 {% endif %}
                             </span>
                             <span>{% if profile.warning_enabled %}Enabled{% else %}Disabled{% endif %}</span>
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label text-muted small">Daily Goal</label>
-                        <p class="mb-0">{{ profile.daily_goal|default:"Not set" }}</p>
-                    </div>
-                    <hr>
-                    <div class="row text-center">
-                        <div class="col-6">
-                            <div class="h4 mb-0 text-primary">{{ today_pomodoros }}</div>
-                            <small class="text-muted">Pomodoros Today</small>
-                        </div>
-                        <div class="col-6">
-                            <div class="h4 mb-0 text-warning">{{ today_distractions }}</div>
-                            <small class="text-muted">Distractions</small>
                         </div>
                     </div>
                     <hr>
@@ -501,6 +608,49 @@
                 </div>
             </div>
         </div>
+        
+        <!-- HRV Quick Action -->
+        <div class="col-lg-4">
+            <div class="card h-100 border-success">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-heartbeat me-2"></i>
+                        HRV Sensor
+                    </h5>
+                </div>
+                <div class="card-body text-center">
+                    {% if latest_hrv %}
+                        <div class="mb-3">
+                            <div class="h3 mb-0 text-success">{{ latest_hrv.bpm|default:"--"|floatformat:0 }}</div>
+                            <small class="text-muted">BPM</small>
+                        </div>
+                        <div class="mb-3">
+                            <div class="h6 mb-0 text-muted">{{ latest_hrv.sdnn|default:"--"|floatformat:1 }}</div>
+                            <small class="text-muted">SDNN (ms)</small>
+                        </div>
+                        <div class="mb-3">
+                            {% if latest_hrv.get_stress_level_display %}
+                                <span class="badge bg-{% if latest_hrv.stress_level == 'relaxed' %}success{% elif latest_hrv.stress_level == 'normal' %}info{% elif latest_hrv.stress_level == 'mild_stress' %}warning{% elif latest_hrv.stress_level == 'moderate_stress' %}orange{% else %}danger{% endif %} p-2">
+                                    {{ latest_hrv.get_stress_level_display }}
+                                </span>
+                            {% endif %}
+                        </div>
+                        <div class="mb-3">
+                            <small class="text-muted">Score: {{ latest_hrv.hrv_score|default:"--"|floatformat:0 }}/100</small>
+                        </div>
+                    {% else %}
+                        <div class="mb-3">
+                            <i class="fas fa-heartbeat fa-3x text-muted mb-2"></i>
+                            <p class="text-muted">No HRV data yet</p>
+                        </div>
+                    {% endif %}
+                    
+                    <button class="btn btn-success btn-lg w-100" onclick="alert('Run HRV bridge: python hrv_bridge.py from terminal')">
+                        <i class="fas fa-play me-2"></i>Run HRV Sensor
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Charts Section -->
@@ -558,11 +708,95 @@
 {% block extra_js %}
 <script>
     // Chart configuration
-    const chartLabels = {{ chart_labels|safe }};
-    const finalScores = {{ chart_final_scores|safe }};
-    const reactionScores = {{ chart_reaction|safe }};
-    const eyeScores = {{ chart_eye|safe }};
-    const hrvScores = {{ chart_hrv|safe }};
+    console.log('Chart labels:', {{ chart_labels|safe }});
+    console.log('Chart scores:', {{ chart_final_scores|safe }});
+    
+// Check if Chart is loaded
+    if (typeof Chart === 'undefined') {
+        console.error('Chart.js not loaded!');
+    } else {
+        const chartLabels = {{ chart_labels|safe }};
+        const finalScores = {{ chart_final_scores|safe }};
+        const reactionScores = {{ chart_reaction|safe }};
+        const eyeScores = {{ chart_eye|safe }};
+        const hrvScores = {{ chart_hrv|safe }};
+
+        // Main drift trend chart
+        const ctx = document.getElementById('driftChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: chartLabels.length > 0 ? chartLabels : ['No data'],
+                datasets: [
+                    {
+                        label: 'Final Score',
+                        data: finalScores.length > 0 ? finalScores : [0],
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true
+                    },
+                    {
+                        label: 'Reaction',
+                        data: reactionScores.length > 0 ? reactionScores : [0],
+                        borderColor: '#dc3545',
+                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        hidden: false
+                    },
+                    {
+                        label: 'Eye',
+                        data: eyeScores.length > 0 ? eyeScores : [0],
+                        borderColor: '#6f42c1',
+                        backgroundColor: 'rgba(111, 66, 193, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        hidden: false
+                    },
+                    {
+                        label: 'HRV',
+                        data: hrvScores.length > 0 ? hrvScores : [0],
+                        borderColor: '#198754',
+                        backgroundColor: 'rgba(25, 135, 84, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        title: {
+                            display: true,
+                            text: 'Drift Score (0-100)'
+                        }
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                }
+            }
+        });
+    }
 
     // Main drift trend chart
     const ctx = document.getElementById('driftChart').getContext('2d');
@@ -657,6 +891,317 @@
                 }
             });
         });
+    });
+    
+    // Quick distraction logging
+    window.logDistraction = function() {
+        fetch('/api/log-distraction/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({
+                distraction_type: 'other',
+                distraction_name: 'Quick log',
+                notes: ''
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('distractionsTodayCount').textContent = data.distractions_today;
+            } else {
+                alert('Error logging distraction');
+            }
+        })
+        .catch(err => console.error('Error:', err));
+    };
+    
+    // Pomodoro Timer
+    let pomodoroInterval = null;
+    let pomodoroSeconds = {{ focus_minutes|default:25 }} * 60;
+    let pomodoroIsBreak = false;
+    let pomodoroIsRunning = false;
+    
+    window.pomodoroSetMode = function(mode) {
+        pomodoroIsBreak = (mode === 'break');
+        pomodoroSeconds = (pomodoroIsBreak ? {{ break_minutes|default:10 }} : {{ focus_minutes|default:25 }}) * 60;
+        pomodoroIsRunning = false;
+        if (pomodoroInterval) clearInterval(pomodoroInterval);
+        
+        document.getElementById('pomodoroModeLabel').textContent = pomodoroIsBreak ? 'Break' : 'Focus';
+        document.getElementById('pomodoroModeLabel').className = 'badge mb-2 ' + (pomodoroIsBreak ? 'bg-success' : 'bg-primary');
+        pomodoroUpdateDisplay();
+        document.getElementById('pomodoroStartBtn').disabled = false;
+        document.getElementById('pomodoroPauseBtn').disabled = true;
+    };
+    
+    window.pomodoroStart = function() {
+        if (pomodoroIsRunning) return;
+        pomodoroIsRunning = true;
+        document.getElementById('pomodoroStartBtn').disabled = true;
+        document.getElementById('pomodoroPauseBtn').disabled = false;
+        
+        pomodoroInterval = setInterval(function() {
+            if (pomodoroSeconds > 0) {
+                pomodoroSeconds--;
+                pomodoroUpdateDisplay();
+            } else {
+                pomodoroComplete();
+            }
+        }, 1000);
+    };
+    
+    window.pomodoroPause = function() {
+        pomodoroIsRunning = false;
+        if (pomodoroInterval) clearInterval(pomodoroInterval);
+        document.getElementById('pomodoroStartBtn').disabled = false;
+        document.getElementById('pomodoroPauseBtn').disabled = true;
+    };
+    
+    window.pomodoroReset = function() {
+        pomodoroPause();
+        pomodoroSetMode(pomodoroIsBreak ? 'break' : 'focus');
+    };
+    
+    function pomodoroUpdateDisplay() {
+        const mins = Math.floor(pomodoroSeconds / 60);
+        const secs = pomodoroSeconds % 60;
+        document.getElementById('pomodoroTimerDisplay').textContent = 
+            String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+    }
+    
+    function pomodoroComplete() {
+        pomodoroPause();
+        
+        if (!pomodoroIsBreak) {
+            // Complete focus session
+            fetch('/api/complete-pomodoro/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken()
+                },
+                body: JSON.stringify({
+                    session_type: 'focus',
+                    duration_minutes: {{ focus_minutes|default:25 }}
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('pomodoroTodayCount').textContent = data.pomodoros_today;
+                    alert('Focus session completed! Take a short break.');
+                }
+            });
+        } else {
+            alert('Break time is over! Ready for another focus session?');
+        }
+        
+        pomodoroSetMode('focus');
+    }
+    
+    function getCsrfToken() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? match[1] : '';
+    }
+</script>
+
+<!-- Quick Settings JavaScript -->
+<script>
+    console.log("Quick Settings JS loaded");
+    
+    document.addEventListener("DOMContentLoaded", function() {
+        console.log("DOM Ready - Quick Settings initializing");
+        
+        // Get focus and break minutes from Django context
+        var FOCUS_MINUTES = {{ focus_minutes|default:25 }};
+        var BREAK_MINUTES = {{ break_minutes|default:10 }};
+        var COGNITIVE_STATE = "{{ effective_state|default:'STABLE'|lower }}";
+        
+        console.log("Focus minutes:", FOCUS_MINUTES, "Break minutes:", BREAK_MINUTES);
+        console.log("Cognitive state:", COGNITIVE_STATE);
+        
+        // Show drift warning if needed
+        var driftWarning = document.getElementById('driftWarning');
+        if (driftWarning && COGNITIVE_STATE) {
+            console.log("Drift state detected:", COGNITIVE_STATE);
+            // Highlight Break button for drift states
+            document.getElementById('pomodoroBreakBtn').classList.add('border-danger', 'text-danger');
+        }
+        
+        // Pomodoro Timer Variables
+        var pomodoroInterval = null;
+        var pomodoroSeconds = FOCUS_MINUTES * 60;
+        var pomodoroIsBreak = false;
+        var pomodoroIsRunning = false;
+        
+        // Log Distraction
+        window.logDistraction = function() {
+            console.log("Log Distraction clicked");
+            var csrfToken = getCsrfToken();
+            console.log("CSRF Token:", csrfToken ? "present" : "missing");
+            
+            fetch('/api/log-distraction/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({
+                    distraction_type: 'other',
+                    distraction_name: 'Quick log',
+                    notes: ''
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log("Distraction response:", data);
+                if (data.success) {
+                    document.getElementById('distractionsTodayCount').textContent = data.distractions_today;
+                    console.log("Distraction count updated to:", data.distractions_today);
+                } else {
+                    alert('Error logging distraction: ' + data.error);
+                }
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                alert('Error logging distraction');
+            });
+        };
+        
+        // Update button to use onclick
+        document.getElementById('logDistractionBtn').onclick = function() {
+            logDistraction();
+        };
+        
+        // Pomodoro Set Mode (Focus/Break)
+        window.pomodoroSetMode = function(mode) {
+            console.log("pomodoroSetMode called:", mode);
+            pomodoroIsBreak = (mode === 'break');
+            pomodoroSeconds = (pomodoroIsBreak ? BREAK_MINUTES : FOCUS_MINUTES) * 60;
+            pomodoroIsRunning = false;
+            if (pomodoroInterval) clearInterval(pomodoroInterval);
+            
+            var modeLabel = document.getElementById('pomodoroModeLabel');
+            modeLabel.textContent = pomodoroIsBreak ? 'Break' : 'Focus';
+            modeLabel.className = 'badge mb-2 ' + (pomodoroIsBreak ? 'bg-success' : 'bg-primary');
+            
+            pomodoroUpdateDisplay();
+            document.getElementById('pomodoroStartBtn').disabled = false;
+            document.getElementById('pomodoroStartBtn').innerHTML = '<i class="fas fa-play"></i> Start';
+            document.getElementById('pomodoroPauseBtn').disabled = true;
+            document.getElementById('pomodoroPauseBtn').innerHTML = '<i class="fas fa-pause"></i> Pause';
+            
+            console.log("Timer set to:", pomodoroSeconds, "seconds");
+        };
+        
+        // Wrap in functions
+        window.pomodoroStart = function() {
+            console.log("pomodoroStart clicked");
+            if (pomodoroIsRunning) return;
+            pomodoroIsRunning = true;
+            
+            document.getElementById('pomodoroStartBtn').disabled = true;
+            document.getElementById('pomodoroStartBtn').innerHTML = '<i class="fas fa-play"></i> Running...';
+            document.getElementById('pomodoroPauseBtn').disabled = false;
+            
+            console.log("Timer started");
+            
+            pomodoroInterval = setInterval(function() {
+                console.log("Timer tick:", pomodoroSeconds);
+                if (pomodoroSeconds > 0) {
+                    pomodoroSeconds--;
+                    pomodoroUpdateDisplay();
+                } else {
+                    pomodoroComplete();
+                }
+            }, 1000);
+        };
+        
+        window.pomodoroPause = function() {
+            console.log("pomodoroPause clicked");
+            pomodoroIsRunning = false;
+            if (pomodoroInterval) clearInterval(pomodoroInterval);
+            document.getElementById('pomodoroStartBtn').disabled = false;
+            document.getElementById('pomodoroStartBtn').innerHTML = '<i class="fas fa-play"></i> Start';
+            document.getElementById('pomodoroPauseBtn').disabled = true;
+            console.log("Timer paused");
+        };
+        
+        window.pomodoroReset = function() {
+            console.log("pomodoroReset clicked");
+            pomodoroPause();
+            pomodoroSetMode(pomodoroIsBreak ? 'break' : 'focus');
+            console.log("Timer reset");
+        };
+        
+        function pomodoroUpdateDisplay() {
+            var mins = Math.floor(pomodoroSeconds / 60);
+            var secs = pomodoroSeconds % 60;
+            var display = String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+            document.getElementById('pomodoroTimerDisplay').textContent = display;
+        }
+        
+        function pomodoroComplete() {
+            console.log("pomodoroComplete triggered");
+            pomodoroPause();
+            
+            var messageEl = document.getElementById('pomodoroMessage');
+            
+            if (!pomodoroIsBreak) {
+                // Complete focus session - save in DB
+                var csrfToken = getCsrfToken();
+                fetch('/api/complete-pomodoro/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({
+                        session_type: 'focus',
+                        duration_minutes: FOCUS_MINUTES
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Pomodoro completion response:", data);
+                    if (data.success) {
+                        document.getElementById('pomodoroTodayCount').textContent = data.pomodoros_today;
+                        // Show completion message
+                        messageEl.innerHTML = '<span class="text-success">✅ Focus session completed. Take a short break.</span>';
+                        messageEl.className = 'small mb-2 text-success';
+                    }
+                });
+            } else {
+                // Break completed
+                messageEl.innerHTML = '<span class="text-success">✅ Break completed. Ready to focus again!</span>';
+                messageEl.className = 'small mb-2 text-success';
+            }
+            
+            // Clear message after 5 seconds
+            setTimeout(function() {
+                messageEl.innerHTML = '';
+                messageEl.className = 'small mb-2';
+            }, 5000);
+            
+            pomodoroSetMode('focus');
+        }
+        
+        function getCsrfToken() {
+            var match = document.cookie.match(/csrftoken=([^;]+)/);
+            return match ? match[1] : '';
+        }
+        
+        // Add onclick handlers to buttons
+        document.getElementById('pomodoroFocusBtn').onclick = function() { pomodoroSetMode('focus'); };
+        document.getElementById('pomodoroBreakBtn').onclick = function() { pomodoroSetMode('break'); };
+        document.getElementById('pomodoroStartBtn').onclick = function() { pomodoroStart(); };
+        document.getElementById('pomodoroPauseBtn').onclick = function() { pomodoroPause(); };
+        document.getElementById('pomodoroResetBtn').onclick = function() { pomodoroReset(); };
+        
+        console.log("Quick Settings handlers attached");
     });
 </script>
 

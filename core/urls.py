@@ -54,4 +54,17 @@ urlpatterns = [
 
     #Phase 5 - Fusion
     path('fusion/', views.run_fusion, name='fusion'),
+    
+    # Phase 6 Part 1 - Smart Validation Engine
+    path('api/evaluate-drift/', views.api_evaluate_suspected_drift, name='api_evaluate_drift'),
+    path('api/validate-reaction/', views.api_validate_reaction_confirmation, name='api_validate_reaction'),
+    path('api/validation-status/', views.api_validation_status, name='api_validation_status'),
+    
+    # Phase 8 - Productivity & Behavior Layer
+    path('api/start-pomodoro/', views.api_start_pomodoro, name='api_start_pomodoro'),
+    path('api/complete-pomodoro/', views.api_complete_pomodoro, name='api_complete_pomodoro'),
+    path('goal-settings/', views.goal_settings, name='goal_settings'),
+    path('api/add-goal/', views.api_add_goal, name='api_add_goal'),
+    path('api/complete-goal/<int:goal_id>/', views.api_complete_goal, name='api_complete_goal'),
+    path('api/log-distraction/', views.api_log_distraction, name='api_log_distraction'),
 ]

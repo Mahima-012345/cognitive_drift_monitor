@@ -89,12 +89,13 @@ class DriftRecord(models.Model):
     def save(self, *args, **kwargs):
         if self.final_score is None and all([self.reaction_score, self.eye_score, self.hrv_score]):
             self.final_score = (self.reaction_score + self.eye_score + self.hrv_score) / 3
-        if self.cognitive_state == 'focused' and self.final_score and self.final_score > 30:
-            self.cognitive_state = 'mild_drift'
-        if self.cognitive_state == 'mild_drift' and self.final_score and self.final_score > 50:
-            self.cognitive_state = 'moderate_drift'
-        if self.final_score and self.final_score > 70:
+        # INVERTED: lower score = more drift
+        if self.final_score and self.final_score < 30:
             self.cognitive_state = 'severe_drift'
+        elif self.final_score and self.final_score < 50:
+            self.cognitive_state = 'moderate_drift'
+        elif self.final_score and self.final_score < 70:
+            self.cognitive_state = 'mild_drift'
         super().save(*args, **kwargs)
 
 
@@ -428,13 +429,13 @@ class WarningLog(models.Model):
     """
     Stores cognitive drift warnings and alerts.
     Tracks when warnings were triggered and their acknowledgment status.
+    Phase 7: Enhanced with level-based messages and suggestions.
     """
     WARNING_LEVEL_CHOICES = [
-        ('info', 'Info'),
-        ('low', 'Low'),
-        ('medium', 'Medium'),
-        ('high', 'High'),
-        ('critical', 'Critical'),
+        ('level_1', 'Level 1 - Mild'),
+        ('level_2', 'Level 2 - Moderate'),
+        ('level_3', 'Level 3 - High'),
+        ('level_4', 'Level 4 - Chronic'),
     ]
 
     TRIGGER_SOURCE_CHOICES = [
@@ -442,6 +443,7 @@ class WarningLog(models.Model):
         ('eye', 'Eye Tracking'),
         ('hrv', 'HRV Sensor'),
         ('combined', 'Combined Analysis'),
+        ('validation', 'Validation'),
         ('manual', 'Manual Trigger'),
     ]
 
@@ -449,6 +451,7 @@ class WarningLog(models.Model):
     timestamp = models.DateTimeField(default=timezone.now)
     warning_level = models.CharField(max_length=10, choices=WARNING_LEVEL_CHOICES)
     warning_message = models.TextField()
+    suggestions = models.JSONField(default=list, blank=True)
     trigger_source = models.CharField(max_length=20, choices=TRIGGER_SOURCE_CHOICES)
     acknowledged = models.BooleanField(default=False)
 
@@ -459,10 +462,14 @@ class WarningLog(models.Model):
         indexes = [
             models.Index(fields=['user', '-timestamp']),
             models.Index(fields=['acknowledged']),
+            models.Index(fields=['warning_level']),
         ]
 
     def __str__(self):
         return f"Warning [{self.warning_level}] - {self.user.username} - {self.timestamp.strftime('%Y-%m-%d %H:%M')}"
+
+    def get_level_number(self):
+        return int(self.warning_level.split('_')[1]) if '_' in self.warning_level else 0
 
 
 class GoalRecord(models.Model):
@@ -586,5 +593,95 @@ class FusionRecord(models.Model):
 
     intervention_message = models.TextField(null=True, blank=True)
 
+    # Phase 6: Validation status controls final output
+    # null = not validated, false_alert = no drift, confirmed_drift = drift confirmed
+    validation_status = models.CharField(
+        max_length=20, null=True, blank=True,
+        choices=[
+            ('pending', 'Pending'),
+            ('suspected', 'Suspected'),
+            ('confirmed_drift', 'Confirmed Drift'),
+            ('false_alert', 'False Alert'),
+        ]
+    )
+
+    def get_effective_state(self):
+        """
+        Returns the FINAL cognitive state based on validation.
+        Validation result OVERRIDES the calculated drift score.
+        """
+        if self.validation_status == 'confirmed_drift':
+            return 'CONFIRMED_DRIFT'
+        elif self.validation_status == 'false_alert':
+            return 'STABLE'
+        elif self.validation_status == 'suspected':
+            return 'MILD_DRIFT'
+        else:
+            return self.final_state or 'STABLE'
+
+    def get_effective_score(self):
+        """
+        Returns the FINAL score based on validation.
+        False alert = safe score, Confirmed = calculated score.
+        """
+        if self.validation_status == 'false_alert':
+            return 15.0  # Safe/neutral score
+        elif self.validation_status == 'confirmed_drift':
+            return self.final_drift_score or 50.0
+        else:
+            return self.final_drift_score or 0
+
     def __str__(self):
         return f"{self.user} - {self.final_state}"
+
+
+class DriftValidation(models.Model):
+    """
+    Phase 6 Part 1: Smart Validation Engine
+    Tracks the validation flow from suspected drift to confirmed drift.
+    """
+    VALIDATION_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('suspected', 'Suspected Drift'),
+        ('waiting_reaction', 'Waiting for Reaction Test'),
+        ('confirmed_drift', 'Confirmed Drift'),
+        ('false_alert', 'False Alert Avoided'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='drift_validations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    within_study_hours = models.BooleanField(default=False)
+    eye_drift = models.BooleanField(default=False, help_text="Eye fatigue/drowsiness detected")
+    hrv_drift = models.BooleanField(default=False, help_text="HRV stress/abnormal detected")
+
+    suspected_drift = models.BooleanField(default=False, help_text="Both eye and HRV drift during study hours")
+    reaction_test_required = models.BooleanField(default=False)
+
+    reaction_test_completed = models.BooleanField(default=False, help_text="User completed the reaction test")
+    reaction_session = models.ForeignKey(
+        'ReactionSession', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='validation_records'
+    )
+
+    status = models.CharField(max_length=20, choices=VALIDATION_STATUS_CHOICES, default='pending')
+    drift_confirmed = models.BooleanField(default=False, help_text="True if reaction confirmed drift vs baseline")
+    confirmation_reason = models.TextField(blank=True, help_text="Human-readable reason for validation result")
+
+    class Meta:
+        verbose_name = "Drift Validation"
+        verbose_name_plural = "Drift Validations"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f"Validation {self.id} - {self.user.username} - {self.status}"
+
+    @property
+    def is_active(self):
+        """Check if this validation record is still pending action."""
+        return self.status in ['suspected', 'waiting_reaction']
