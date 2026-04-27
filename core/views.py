@@ -37,6 +37,99 @@ from .validation_engine import (
 from .warning_levels import get_warning_info, get_level_display_name, WARNING_MESSAGES
 
 
+def calculate_reaction_score(mean_rt, baseline_rt, std_dev):
+    """
+    Calculate reaction score using both baseline comparison AND absolute speed.
+    
+    Phase 9: Combined relative + absolute scoring
+    
+    Args:
+        mean_rt: Mean reaction time in ms
+        baseline_rt: User's personal baseline RT (from get_baseline_for_user)
+        std_dev: Standard deviation of reaction times
+    
+    Returns:
+        dict with: score, status, explanation
+    """
+    if mean_rt is None or mean_rt <= 0:
+        return {
+            'score': 0,
+            'status': 'Moderate Drift',
+            'explanation': 'No valid reaction time'
+        }
+    
+    result = {
+        'score': 0,
+        'status': 'Stable',
+        'explanation': ''
+    }
+    
+    baseline_diff = 0
+    relative_score = None
+    
+    # 1. Relative baseline score
+    if baseline_rt is not None and baseline_rt > 0:
+        baseline_diff = (mean_rt - baseline_rt) / baseline_rt
+        
+        if baseline_diff <= 0:
+            relative_score = 100
+        elif baseline_diff <= 0.05:
+            relative_score = 90
+        elif baseline_diff <= 0.10:
+            relative_score = 75
+        elif baseline_diff <= 0.15:
+            relative_score = 60
+        else:
+            relative_score = 40
+    
+    # 2. Absolute reaction score
+    if mean_rt < 250:
+        absolute_score = 100
+    elif mean_rt < 350:
+        absolute_score = 85
+    elif mean_rt < 500:
+        absolute_score = 65
+    elif mean_rt < 700:
+        absolute_score = 45
+    else:
+        absolute_score = 30
+    
+    # 3. Final reaction score
+    if relative_score is not None:
+        result['score'] = (0.6 * relative_score) + (0.4 * absolute_score)
+    else:
+        result['score'] = absolute_score
+    
+    # 4. Variability penalty
+    if std_dev is not None:
+        if std_dev > 150:
+            result['score'] -= 10
+        elif std_dev > 100:
+            result['score'] -= 5
+    
+    # 5. Clamp score
+    result['score'] = max(0, min(100, round(result['score'], 1)))
+    
+    # 6. Reaction status
+    if result['score'] >= 85:
+        result['status'] = 'Excellent'
+    elif result['score'] >= 70:
+        result['status'] = 'Stable'
+    elif result['score'] >= 50:
+        result['status'] = 'Mild Drift'
+    else:
+        result['status'] = 'Moderate Drift'
+    
+    # 7. Explanation
+    if relative_score is not None:
+        rel_indicator = "faster than" if baseline_diff <= 0 else f"{int(baseline_diff*100)}% slower than"
+        result['explanation'] = f"mean_rt={mean_rt}ms, {rel_indicator} baseline ({baseline_rt}ms), abs_score={absolute_score}"
+    else:
+        result['explanation'] = f"mean_rt={mean_rt}ms (no baseline), abs_score={absolute_score}"
+    
+    return result
+
+
 def map_state_to_level(current_state):
     """Phase 7: Centralized state to level mapping"""
     state_lower = str(current_state).lower() if current_state else ""
@@ -456,6 +549,9 @@ def dashboard(request):
     # Check if all 3 sensor data exists
     all_sensors_exist = latest_reaction is not None and latest_eye is not None and latest_hrv is not None
     
+    # Default confidence level - will be overwritten when data exists
+    confidence_level = 'Unavailable'
+    
     if latest_drift and all_sensors_exist:
         # Use DriftRecord only when all sensors have data
         cognitive_state_map = {
@@ -471,14 +567,19 @@ def dashboard(request):
         # Calculate level from cognitive_state
         if latest_drift.cognitive_state == 'focused':
             warning_level = 0
+            confidence_level = 'Normal'
         elif latest_drift.cognitive_state == 'mild_drift':
             warning_level = 1
+            confidence_level = 'Low'
         elif latest_drift.cognitive_state == 'moderate_drift':
             warning_level = 2
+            confidence_level = 'Medium'
         elif latest_drift.cognitive_state == 'severe_drift':
             warning_level = 3
+            confidence_level = 'High'
         else:
             warning_level = 0
+            confidence_level = 'Normal'
     else:
         # Either no DriftRecord OR incomplete sensor data
         if all_sensors_exist:
@@ -498,20 +599,26 @@ def dashboard(request):
             if effective_score >= 70:
                 effective_state = 'STABLE'
                 warning_level = 0
+                confidence_level = 'Normal'
             elif effective_score >= 50:
                 effective_state = 'MILD_DRIFT'
                 warning_level = 1
+                confidence_level = 'Low'
             elif effective_score >= 30:
                 effective_state = 'MODERATE_DRIFT'
                 warning_level = 2
+                confidence_level = 'Medium'
             else:
                 effective_state = 'CONFIRMED_DRIFT'
                 warning_level = 3
+                confidence_level = 'High'
         else:
             # Missing sensor data - incomplete
             effective_state = 'INCOMPLETE_DATA'
             effective_score = None
-            warning_level = 0
+            warning_level = None
+            confidence_level = 'Unavailable'
+            abnormal_signals = ['Required sensor data missing']
     
     fusion_state_display = state_display.get(effective_state, 'No Data') if effective_state else 'No Data'
 
@@ -529,7 +636,13 @@ def dashboard(request):
     }.get(warning_level, {'level': 'none', 'display': 'Unknown', 'color': 'secondary'})
 
     # Get warning info and recommendations from DriftRecord ONLY
-    if warning_level == 0 and all_sensors_exist:
+    if not all_sensors_exist:
+        # Incomplete data - show different message first
+        recommendations = [
+            "Complete all three tests to get cognitive state recommendation.",
+            "Run Reaction Test, Eye Tracker, and HRV Sensor.",
+        ]
+    elif warning_level == 0:
         # Stable/focused
         recommendations = [
             "You are focused. Keep going!",
@@ -549,12 +662,6 @@ def dashboard(request):
         recommendations = [
             "Stop session briefly and rest.",
             "Consider ending for today.",
-        ]
-    elif not all_sensors_exist:
-        # Incomplete data
-        recommendations = [
-            "Complete all three tests to get cognitive state recommendation.",
-            "Run Reaction Test, Eye Tracker, and HRV Sensor.",
         ]
     else:
         recommendations = []
@@ -613,6 +720,8 @@ def dashboard(request):
         'current_state': effective_state if effective_state else 'No Data',
         'current_level': warning_level,
         'abnormal_count': abnormal_count,
+        'all_sensors_exist': all_sensors_exist,
+        'confidence_level': confidence_level,
     }
     
     # Phase 7 debug: Print current badge values
@@ -971,6 +1080,16 @@ def api_save_reaction(request):
             )
 
             reaction_score = min(100, max(0, 50 + (form.cleaned_data['z_score'] * 10)))
+            
+            baseline = ReactionSession.get_baseline_for_user(request.user)
+            baseline_rt = baseline.get('baseline_mean') if baseline else None
+            
+            score_result = calculate_reaction_score(
+                form.cleaned_data['mean_rt'],
+                baseline_rt,
+                form.cleaned_data.get('std_rt')
+            )
+            reaction_score = score_result['score']
 
             drift_record = DriftRecord.objects.create(
                 user=request.user,
@@ -1454,9 +1573,13 @@ def api_save_reaction_session(request):
         session.refresh_from_db()
         baseline = ReactionSession.get_baseline_for_user(user)
         
-        reaction_score = min(100, max(0, 30 + (session.variability * 50) + (session.z_score * 10)))
+        baseline_rt = baseline.get('baseline_mean') if baseline else None
+        
+        score_result = calculate_reaction_score(session.mean_rt, baseline_rt, session.std_dev)
+        reaction_score = score_result['score']
+        
         if DEBUG:
-            print(f"[REACTION SAVE] reaction_score calculated: {reaction_score}")
+            print(f"[REACTION SAVE] reaction_score: {reaction_score}, status: {score_result['status']}")
         
         # Save drift_score to session for Phase 5 fusion
         session.drift_score = reaction_score

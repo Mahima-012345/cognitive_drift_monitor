@@ -79,17 +79,23 @@ def get_warning_level_from_state(cognitive_state):
 
 def get_warning_info(level):
     """Get warning info dictionary for a given level."""
-    level_key = f'level_{level}' if level > 0 else None
+    if level is None or level == 0:
+        return None
+    level_key = f'level_{level}'
     if level_key and level_key in WARNING_MESSAGES:
         return WARNING_MESSAGES[level_key]
     return None
 
 def should_show_popup(level):
     """Determine if popup should be shown for this level."""
+    if level is None or level < 2:
+        return False
     return level >= 2
 
 def get_badge_class(level):
     """Get Bootstrap badge class for warning level."""
+    if level is None:
+        return 'bg-secondary'
     if level == 1:
         return 'bg-info'
     elif level == 2:
@@ -98,11 +104,15 @@ def get_badge_class(level):
         return 'bg-danger'
     elif level >= 4:
         return 'bg-dark'
-    return 'bg-secondary'
+    return 'bg-success'
 
 def get_level_display_name(level):
     """Get display name for warning level."""
-    if level == 1:
+    if level is None:
+        return 'No Data'
+    if level == 0:
+        return 'Normal'
+    elif level == 1:
         return 'Level 1'
     elif level == 2:
         return 'Level 2'

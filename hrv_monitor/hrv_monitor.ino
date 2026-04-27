@@ -201,15 +201,23 @@ void updateSDNN() {
 }
 
 // ====== GET STRESS LEVEL ======
+// SDNN classification per Phase 9 update:
+// - sdnn > 150: Invalid Data (noise/sensor issue)
+// - sdnn >= 50 and sdnn <= 100: Normal
+// - sdnn > 100 and sdnn <= 150: Low Stress  
+// - sdnn >= 20 and sdnn < 50: Moderate Stress
+// - sdnn < 20: High Stress
 const char* getStressLevel(float sdnn) {
-  if (sdnn > 100) {
-    return "Unstable";        // Noise/unstable
-  } else if (sdnn >= 60) {
-    return "Relaxed";         // Good HRV
-  } else if (sdnn >= 30) {
-    return "Moderate";        // Some stress
+  if (sdnn > 150) {
+    return "Invalid Data";   // Sensor noise - don't treat as low stress
+  } else if (sdnn >= 50 && sdnn <= 100) {
+    return "Normal";        // Healthy HRV range
+  } else if (sdnn > 100 && sdnn <= 150) {
+    return "Low Stress";    // Elevated but valid
+  } else if (sdnn >= 20 && sdnn < 50) {
+    return "Moderate Stress";
   } else {
-    return "High Stress";    // Low HRV = high stress
+    return "High Stress";   // sdnn < 20 = high stress
   }
 }
 

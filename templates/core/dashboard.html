@@ -75,7 +75,9 @@
                         {% else %}
                             <span class="state-badge badge bg-secondary">No Data</span>
                         {% endif %}
-                        {% if warning_level > 0 %}
+                        {% if warning_level == None %}
+                        <span class="badge bg-secondary ms-1">No Data</span>
+                        {% elif warning_level > 0 %}
                         <span class="badge bg-{% if warning_level == 1 %}info{% elif warning_level == 2 %}warning{% else %}danger{% endif %} ms-1">
                             Level {{ warning_level }}
                         </span>
@@ -91,19 +93,21 @@
         </div>
     </div>
 
-    <!-- Recommendations Section - Right after welcome -->
-    {% if recommendations and warning_level > 0 %}
+    <!-- Recommendations Section - Always visible based on cognitive state -->
+    {% if effective_state %}
     <div class="row g-4 mb-4">
         <div class="col-12">
             <div class="card border-0 shadow-sm">
                 <div class="card-header bg-gradient text-white 
-                    {% if warning_level == 1 %}bg-info
-                    {% elif warning_level == 2 %}bg-warning text-dark
-                    {% elif warning_level == 3 %}bg-danger
-                    {% else %}bg-dark{% endif %}">
+                    {% if effective_state == 'STABLE' %}bg-success
+                    {% elif effective_state == 'MILD_DRIFT' %}bg-warning text-dark
+                    {% elif effective_state == 'MODERATE_DRIFT' %}bg-orange
+                    {% elif effective_state == 'CONFIRMED_DRIFT' %}bg-danger
+                    {% elif effective_state == 'CHRONIC_DRIFT' %}bg-dark
+                    {% else %}bg-secondary{% endif %}">
                     <h5 class="mb-0">
                         <i class="fas fa-lightbulb me-2"></i>
-                        Recommendations - Level {{ warning_level }}
+                        Recommendation
                     </h5>
                 </div>
                 <div class="card-body">
@@ -113,23 +117,105 @@
                                 {% for rec in recommendations %}
                                 <li class="mb-2">
                                     <i class="fas fa-check-circle me-2 
-                                        {% if warning_level == 1 %}text-info
-                                        {% elif warning_level == 2 %}text-warning
-                                        {% elif warning_level == 3 %}text-danger{% endif %}">
+                                        {% if effective_state == 'STABLE' %}text-success
+                                        {% elif effective_state == 'MILD_DRIFT' %}text-warning
+                                        {% elif effective_state == 'MODERATE_DRIFT' %}text-orange
+                                        {% elif effective_state == 'CONFIRMED_DRIFT' %}text-danger
+                                        {% else %}text-muted{% endif %}">
                                     </i>{{ rec }}
                                 </li>
+                                {% empty %}
+                                <li class="mb-2 text-muted">No specific recommendations at this time.</li>
                                 {% endfor %}
                             </ul>
                         </div>
                         <div class="col-md-4 text-end">
-                            {% if warning_level >= 2 %}
-                            <button class="btn btn-{% if warning_level == 3 %}danger{% else %}warning{% endif %}" onclick="pomodoroApplyDriftBreak()">
+                            {% if effective_state != 'STABLE' %}
+                            <button class="btn btn-warning" onclick="pomodoroApplyDriftBreak()">
                                 <i class="fas fa-coffee me-1"></i>Start Break
                             </button>
                             {% endif %}
                             <a href="{% url 'reaction_test' %}" class="btn btn-outline-danger ms-1">
                                 <i class="fas fa-redo me-1"></i>Retake Test
                             </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Session Summary Box -->
+    {% if effective_state or effective_score %}
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-chart-pie me-2 text-primary"></i>
+                        Session Summary
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-3">
+                            <div class="h4 mb-0 {% if effective_score >= 70 %}text-success{% elif effective_score >= 40 %}text-warning{% else %}text-danger{% endif %}">
+                                {{ effective_score|default:"--"|floatformat:0 }}%
+                            </div>
+                            <small class="text-muted">Final Drift Score</small>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="h5 mb-0 
+                                {% if effective_state == 'STABLE' %}text-success
+                                {% elif effective_state == 'MILD_DRIFT' %}text-warning
+{% elif effective_state == 'MODERATE_DRIFT' %}text-orange
+                                        {% elif effective_state == 'CONFIRMED_DRIFT' %}text-danger
+                                {% elif effective_state == 'CHRONIC_DRIFT' %}text-dark
+                                {% else %}text-muted{% endif %}">
+                                {% if effective_state == 'STABLE' %}Stable
+                                {% elif effective_state == 'MILD_DRIFT' %}Mild Drift
+                                {% elif effective_state == 'MODERATE_DRIFT' %}Moderate Drift
+                                {% elif effective_state == 'CONFIRMED_DRIFT' %}Confirmed Drift
+                                {% elif effective_state == 'CHRONIC_DRIFT' %}Chronic Drift
+                                {% else %}{{ effective_state|default:"N/A" }}{% endif %}
+                            </div>
+                            <small class="text-muted">Cognitive State</small>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="h5 mb-0 
+                                {% if confidence_level == 'Normal' %}text-success
+                                {% elif confidence_level == 'Low' %}text-info
+                                {% elif confidence_level == 'Medium' %}text-warning
+                                {% elif confidence_level == 'High' %}text-danger
+                                {% elif confidence_level == 'Unavailable' %}text-muted
+                                {% else %}text-muted{% endif %}">
+                                {% if confidence_level %}{{ confidence_level|title }}{% else %}Unavailable{% endif %}
+                            </div>
+                            <small class="text-muted">Confidence</small>
+                        </div>
+                        <div class="col-md-3">
+                            <!-- Why this result -->
+                            <small class="text-muted d-block mb-1">Why this result?</small>
+                            {% if abnormal_signals %}
+                                {% for signal in abnormal_signals %}
+                                <span class="badge bg-danger me-1">{{ signal }}</span>
+                                {% endfor %}
+                            {% else %}
+                                <span class="badge bg-success">All signals normal</span>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-2">
+                            {% if warning_level == None %}
+                            <span class="badge bg-secondary p-2">No Data</span>
+                            {% elif warning_level > 0 %}
+                            <span class="badge bg-{% if warning_level == 1 %}info{% elif warning_level == 2 %}warning{% else %}danger{% endif %} p-2">
+                                Level {{ warning_level }}
+                            </span>
+                            {% else %}
+                            <span class="badge bg-success p-2">Normal</span>
+                            {% endif %}
+                            <br><small class="text-muted">Alert Level</small>
                         </div>
                     </div>
                 </div>
@@ -635,6 +721,20 @@
                                 </span>
                             {% endif %}
                         </div>
+                        {% if hrv_validation %}
+                        <div class="mb-2">
+                            <small class="text-muted">Status:</small>
+                            <div class="small {% if hrv_validation.status == 'Invalid Data' %}text-danger{% elif hrv_validation.status == 'High Stress' or hrv_validation.status == 'Moderate Stress' %}text-warning{% else %}text-success{% endif %}">
+                                {{ hrv_validation.status }}
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <small class="text-muted">Signal:</small>
+                            <div class="small {% if hrv_validation.signal_quality == 'Poor' or hrv_validation.signal_quality == 'Possible sensor noise' %}text-danger{% else %}text-muted{% endif %}">
+                                {{ hrv_validation.signal_quality }}
+                            </div>
+                        </div>
+                        {% endif %}
                         <div class="mb-3">
                             <small class="text-muted">Score: {{ latest_hrv.hrv_score|default:"--"|floatformat:0 }}/100</small>
                         </div>
