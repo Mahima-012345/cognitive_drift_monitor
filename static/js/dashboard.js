@@ -38,16 +38,8 @@ const DashboardAutoRefresh = {
     },
     
     refreshDashboardData: function() {
-        Promise.all([
-            this.fetchSummaryData(),
-            this.fetchChartData()
-        ]).then(results => {
-            this.updateCards(results[0]);
-            this.updateCharts(results[1]);
-            this.updateTimestamp();
-        }).catch(error => {
-            console.error('Error refreshing dashboard:', error);
-        });
+        // Skip - live data is handled by dashboard.html inline JS
+        return Promise.resolve();
     },
     
     fetchSummaryData: function() {
@@ -139,7 +131,7 @@ const DashboardAutoRefresh = {
     },
     
     updateCharts: function(data) {
-        if (!window.driftChart) return;
+        if (!window.driftChart || !window.driftChart.data) return;
         
         // Update chart labels and data
         if (data.labels && data.labels.length > 0) {

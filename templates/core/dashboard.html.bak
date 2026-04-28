@@ -140,18 +140,15 @@
                         </div>
                     </div>
                     <div class="mt-3" id="monitoringMessage"></div>
-                    <!-- Options for monitoring -->
+                    <!-- Password input for starting monitoring -->
                     <div class="mt-2">
                         <div class="row">
                             <div class="col-md-4">
-                                <div class="form-check">
-                                    <input type="checkbox" class="form-check-input" id="showWebcamWindow">
-                                    <label class="form-check-label" for="showWebcamWindow">Show webcam window</label>
-                                </div>
+                                <input type="password" class="form-control form-control-sm" id="monitoringPassword" placeholder="Enter your Django password">
                             </div>
                             <div class="col-md-8 text-muted small">
                                 <i class="fas fa-info-circle me-1"></i>
-                                Check to see eye tracking in real-time
+                                Password required to authenticate Python scripts with Django
                             </div>
                         </div>
                     </div>
@@ -307,6 +304,9 @@
                     </div>
                     <h6 class="text-muted mb-1">Reaction Score</h6>
                     <div class="score-value" id="reactionScore">
+                        {% if latest_fusion.reaction_score %}
+                            {% if latest_fusion.reaction_score >= 60 %}score-good{% elif latest_fusion.reaction_score >= 40 %}score-warning{% else %}score-danger{% endif %}
+                        {% endif %}">
                         {{ latest_fusion.reaction_score|default:"--"|stringformat:"%.0f" }}
                     </div>
                     <small class="text-muted">
@@ -332,6 +332,9 @@
                     </div>
                     <h6 class="text-muted mb-1">Eye Score</h6>
                     <div class="score-value" id="eyeScore">
+                        {% if latest_fusion.eye_score %}
+                            {% if latest_fusion.eye_score >= 60 %}score-good{% elif latest_fusion.eye_score >= 40 %}score-warning{% else %}score-danger{% endif %}
+                        {% endif %}">
                         {{ latest_fusion.eye_score|default:"--"|floatformat:0 }}
                     </div>
                     <small class="text-muted">
@@ -356,6 +359,9 @@
                     </div>
                     <h6 class="text-muted mb-1">HRV Score</h6>
                     <div class="score-value" id="hrvScore">
+                        {% if latest_fusion.hrv_score %}
+                            {% if latest_fusion.hrv_score >= 60 %}score-good{% elif latest_fusion.hrv_score >= 40 %}score-warning{% else %}score-danger{% endif %}
+                        {% endif %}">
                         {{ latest_fusion.hrv_score|default:"--"|stringformat:"%.0f" }}
                     </div>
                     <small class="text-muted">
@@ -383,6 +389,9 @@
                     </div>
                     <h6 class="text-muted mb-1">Final Drift Score</h6>
                     <div class="score-value" id="finalScore">
+                        {% if latest_fusion.final_drift_score %}
+                            {% if latest_fusion.final_drift_score < 30 %}score-good{% elif latest_fusion.final_drift_score < 60 %}score-warning{% else %}score-danger{% endif %}
+                        {% endif %}">
                         {{ latest_fusion.final_drift_score|default:"--"|stringformat:"%.1f" }}
                     </div>
                     <small class="text-muted">
@@ -1413,8 +1422,12 @@
     }
     
     window.startMonitoring = function() {
-        var showWindowEl = document.getElementById('showWebcamWindow');
-        var showWindow = showWindowEl ? showWindowEl.checked : false;
+        var password = document.getElementById('monitoringPassword').value;
+        
+        if (!password) {
+            showMonitoringMessage('Please enter your Django password', true);
+            return;
+        }
         
         var startBtn = document.getElementById('startMonitoringBtn');
         startBtn.disabled = true;
@@ -1427,7 +1440,7 @@
                 'X-CSRFToken': getCsrfToken()
             },
             body: JSON.stringify({
-                show_window: showWindow
+                password: password
             })
         })
         .then(response => response.json())

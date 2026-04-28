@@ -26,6 +26,7 @@ class UserProfile(models.Model):
     daily_goal = models.CharField(max_length=255, blank=True, help_text="Daily study goal description")
     distraction_list = models.TextField(blank=True, help_text="List of common distractions (one per line)")
     warning_enabled = models.BooleanField(default=True)
+    monitoring_token = models.CharField(max_length=64, unique=True, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

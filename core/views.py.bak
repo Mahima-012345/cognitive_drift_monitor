@@ -946,7 +946,7 @@ def api_eye_records(request):
                 'id': r.id,
                 'timestamp': r.timestamp.isoformat(),
                 'blink_rate': r.blink_rate,
-                'blink_duration': r.blink_duration_avg,
+                'blink_duration': r.blink_duration,
                 'eye_state': r.eye_state,
                 'eye_score': r.eye_score,
                 'notes': r.notes,
@@ -1113,36 +1113,12 @@ def api_save_reaction(request):
 
 
 @csrf_exempt
+@login_required
 def api_save_eye(request):
     """
     API endpoint for saving eye tracking data from OpenCV module.
-    Supports both login_required (session) and token authentication.
     Phase 3 - Eye Monitoring Module.
     """
-    # Token-based authentication
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            token = data.get('token')
-            username = data.get('username')
-            
-            if token and username:
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                try:
-                    user = User.objects.get(username=username)
-                    if user.profile.monitoring_token == token:
-                        request.user = user
-                except User.DoesNotExist:
-                    return JsonResponse({'error': 'Invalid token'}, status=403)
-                except Exception:
-                    return JsonResponse({'error': 'Token verification failed'}, status=403)
-        except:
-            pass
-    
-    if not request.user.is_authenticated:
-        return JsonResponse({'error': 'Authentication required'}, status=401)
-    
     print("Saving eye for:", request.user)
     print("="*50)
     print("[EYE SAVE] REQUEST RECEIVED")
@@ -1440,38 +1416,25 @@ def api_hrv_bridge_login(request):
 
 
 @csrf_exempt
+@login_required
 def api_hrv_bridge(request):
     """
     API endpoint for HRV serial bridge script.
-    Supports both login_required (session) and token authentication.
     Phase 4 - HRV Module.
+    
+    Requires authenticated session (login via /api/hrv-bridge-login/ first).
+    
+    Accepts JSON:
+    - ir: raw infrared value (optional)
+    - bpm: heart rate (required)
+    - sdnn: SDNN value (required)
+    - stress: Arduino stress string (e.g., "Low Stress")
     """
-    # Token-based authentication
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            token = data.get('token')
-            username = data.get('username')
-            
-            if token and username:
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                try:
-                    user = User.objects.get(username=username)
-                    if user.profile.monitoring_token == token:
-                        request.user = user
-                except User.DoesNotExist:
-                    return JsonResponse({'success': False, 'error': 'Invalid token'}, status=403)
-                except Exception:
-                    return JsonResponse({'success': False, 'error': 'Token verification failed'}, status=403)
-        except:
-            pass
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
     
     if not request.user.is_authenticated:
         return JsonResponse({'success': False, 'error': 'Not authenticated'}, status=401)
-    
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     try:
         data = json.loads(request.body)
@@ -1871,9 +1834,9 @@ def api_validation_status(request):
 # =============================================================================
 
 from .monitoring_manager import (
-    get_user_monitoring_status,
-    start_monitoring_for_user,
-    stop_monitoring_for_user,
+    get_monitoring_status,
+    start_monitoring,
+    stop_monitoring,
 )
 
 @login_required
@@ -2088,208 +2051,136 @@ def api_log_distraction(request):
 @login_required
 def api_monitoring_status(request):
     """
-    API endpoint to get current monitoring status for the logged-in user.
+    API endpoint to get current monitoring status.
+    Returns whether eye tracker and HRV bridge are running.
     """
-    status = get_user_monitoring_status(request.user.username)
+    status = get_monitoring_status()
     return JsonResponse(status)
 
 
 @login_required
 def api_start_monitoring(request):
     """
-    API endpoint to start monitoring for the logged-in user.
-    Uses token-based authentication - no password required.
-    """
-    import logging
-    logger = logging.getLogger(__name__)
+    API endpoint to start monitoring (eye tracker + HRV bridge).
     
+    Expects JSON (optional):
+    - username: Django username (defaults to request.user)
+    - password: Django password (required for subprocess scripts)
+    
+    Returns: success status and monitoring state.
+    """
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     
     try:
         data = json.loads(request.body) if request.body else {}
-        show_window = data.get('show_window', False)
-        
-        logger.info(f"Starting monitoring for user: {request.user.username}, show_window: {show_window}")
-        result = start_monitoring_for_user(request.user, show_window=show_window)
-        logger.info(f"Result: {result}")
-        return JsonResponse(result)
-    except Exception as e:
-        logger.error(f"Error starting monitoring: {e}")
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+    
+    username = data.get('username', request.user.username)
+    password = data.get('password', '')
+    
+    if not password:
+        return JsonResponse({
+            'success': False, 
+            'error': 'Password required to start monitoring'
+        }, status=400)
+    
+    result = start_monitoring(username, password)
+    return JsonResponse(result)
 
 
 @login_required
 def api_stop_monitoring(request):
     """
-    API endpoint to stop monitoring for the logged-in user.
-    """
-    import logging
-    logger = logging.getLogger(__name__)
+    API endpoint to stop all monitoring processes.
     
+    Returns: success status and monitoring state.
+    """
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     
-    try:
-        logger.info(f"Stopping monitoring for user: {request.user.username}")
-        result = stop_monitoring_for_user(request.user.username)
-        logger.info(f"Result: {result}")
-        return JsonResponse(result)
-    except Exception as e:
-        logger.error(f"Error stopping monitoring: {e}")
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    result = stop_monitoring()
+    return JsonResponse(result)
 
 
 @login_required
 def api_dashboard_live_data(request):
     """
     API endpoint for live dashboard updates.
-    Returns latest sensor data with freshness check and drift detection.
+    Returns latest sensor data without page reload.
     Called every 3 seconds from JavaScript.
     """
-    from django.utils import timezone
-    from datetime import timedelta
-    
     user = request.user
-    now = timezone.now()
-    data_age_limit = now - timedelta(seconds=30)
+    
+    latest_drift = DriftRecord.objects.filter(user=user).order_by('-timestamp').first()
+    latest_reaction = ReactionSession.objects.filter(user=user).order_by('-timestamp').first()
+    latest_eye = EyeRecord.objects.filter(user=user).order_by('-timestamp').first()
+    latest_hrv = HRVRecord.objects.filter(user=user).order_by('-timestamp').first()
+    latest_fusion = FusionRecord.objects.filter(user=user).order_by('-timestamp').first()
     
     monitoring_status = get_monitoring_status()
     
-    # Get latest records
-    latest_eye = EyeRecord.objects.filter(user=user).order_by('-timestamp').first()
-    latest_hrv = HRVRecord.objects.filter(user=user).order_by('-timestamp').first()
-    latest_reaction = ReactionSession.objects.filter(user=user).order_by('-timestamp').first()
-    
-    # Check freshness
-    eye_fresh = latest_eye and latest_eye.timestamp >= data_age_limit if latest_eye else False
-    hrv_fresh = latest_hrv and latest_hrv.timestamp >= data_age_limit if latest_hrv else False
-    reaction_fresh = latest_reaction and latest_reaction.timestamp >= data_age_limit if latest_reaction else False
-    
+    has_reaction = latest_reaction is not None
     has_eye = latest_eye is not None
     has_hrv = latest_hrv is not None
-    has_reaction = latest_reaction is not None
+    all_sensors = has_reaction and has_eye and has_hrv
     
-    # Get scores and states
-    eye_score = latest_eye.eye_score if has_eye else None
+    if latest_drift and all_sensors:
+        final_score = latest_drift.final_score
+        cognitive_state = latest_drift.cognitive_state
+    elif latest_fusion:
+        final_score = latest_fusion.final_drift_score
+        state_map = {'STABLE': 'Stable', 'MILD_DRIFT': 'Mild Drift', 'MODERATE_DRIFT': 'Moderate Drift', 'CONFIRMED_DRIFT': 'Confirmed Drift'}
+        cognitive_state = state_map.get(latest_fusion.final_state, 'No Data')
+    else:
+        final_score = None
+        cognitive_state = 'No Data'
+    
+    reaction_score = latest_drift.reaction_score if latest_drift and latest_drift.reaction_score else None
+    eye_score = latest_drift.eye_score if latest_drift and latest_drift.eye_score else None
+    hrv_score = latest_drift.hrv_score if latest_drift and latest_drift.hrv_score else None
+    
     eye_state = latest_eye.eye_state if has_eye else None
-    
-    hrv_score = latest_hrv.hrv_score if has_hrv else None
     hrv_state = latest_hrv.stress_level if has_hrv else None
     
-    reaction_score = latest_reaction.drift_score if latest_reaction and latest_reaction.drift_score else (latest_reaction.mean_rt if latest_reaction else None)
-    if reaction_score and reaction_score > 0:
-        reaction_score = min(100, reaction_score)
-    reaction_state = latest_reaction.drift_level if latest_reaction else None
-    
-    # Get raw sensor data
-    blink_rate = latest_eye.blink_rate if has_eye else None
-    bpm = latest_hrv.bpm if has_hrv else None
-    sdnn = latest_hrv.sdnn if has_hrv else None
-    
-    # Calculate eye_state using consistent logic
-    if blink_rate is not None:
-        if blink_rate > 30:
-            eye_state = 'eye_strain'
-        elif blink_rate < 15:
-            eye_state = 'drowsy'
-        else:
-            eye_state = 'normal'
-    
-    # Calculate hrv_state using consistent logic
-    if hrv_score is not None:
-        if hrv_score >= 70:
-            hrv_state = 'relaxed'
-        elif hrv_score >= 50:
-            hrv_state = 'moderate_stress'
-        else:
-            hrv_state = 'high_stress'
-    
-    # Drift detection based on calculated states
-    eye_drift = False
-    if eye_state in ['drowsy', 'fatigue', 'eye_strain'] or (eye_score is not None and eye_score < 70):
-        eye_drift = True
-    
-    hrv_drift = False
-    if hrv_state in ['moderate_stress', 'high_stress'] or (hrv_score is not None and hrv_score < 70):
-        hrv_drift = True
-    
-    reaction_drift = False
-    if reaction_state in ['mild_drift', 'moderate_drift', 'severe_drift'] or (reaction_score is not None and reaction_score < 70):
-        reaction_drift = True
-    
-    # Validation logic - use drift flags directly
-    if not eye_fresh and not hrv_fresh:
-        cognitive_state = "Waiting for live data"
-        confidence = "Pending"
-        recommendation = "Waiting for live Eye and HRV data."
-        reaction_required = False
-        final_score = None
-    elif not eye_drift and not hrv_drift and not reaction_drift:
-        # All normal - stable
-        cognitive_state = "Stable"
-        confidence = "Normal"
-        recommendation = "You are focused. Keep going!"
-        reaction_required = False
-        if eye_score is not None and hrv_score is not None:
-            final_score = (eye_score + hrv_score) / 2
-        else:
-            final_score = eye_score or hrv_score or reaction_score
-    elif eye_drift and hrv_drift and not reaction_drift:
-        cognitive_state = "Suspected Drift"
-        confidence = "Medium"
-        recommendation = "Possible drift detected from Eye and HRV. Please take the reaction test to confirm."
-        reaction_required = True
-        final_score = None
-    elif eye_drift and hrv_drift and reaction_drift:
-        cognitive_state = "Confirmed Drift"
-        confidence = "High"
-        recommendation = "Cognitive drift confirmed. Please take a short break."
-        reaction_required = False
-        if eye_score is not None and hrv_score is not None and reaction_score is not None:
-            final_score = (eye_score + hrv_score + reaction_score) / 3
-        elif eye_score is not None and hrv_score is not None:
-            final_score = (eye_score + hrv_score) / 2
-        else:
-            final_score = eye_score or hrv_score
-    elif eye_drift or hrv_drift:
-        cognitive_state = "Mild Drift"
-        confidence = "Low"
-        recommendation = "One signal shows abnormality. Continue monitoring."
-        reaction_required = False
-        final_score = eye_score or hrv_score or reaction_score
+    if final_score is not None and final_score >= 70:
+        confidence = 'Normal'
+    elif final_score is not None and final_score >= 50:
+        confidence = 'Low'
+    elif final_score is not None and final_score >= 30:
+        confidence = 'Medium'
+    elif final_score is not None:
+        confidence = 'High'
     else:
-        cognitive_state = "Stable"
-        confidence = "Normal"
-        recommendation = "You are focused. Keep going!"
-        reaction_required = False
-        if eye_score is not None and hrv_score is not None:
-            final_score = (eye_score + hrv_score) / 2
-        else:
-            final_score = eye_score or hrv_score or reaction_score
+        confidence = 'No Data'
     
-    # Get raw sensor data
-    blink_rate = latest_eye.blink_rate if has_eye else None
-    bpm = latest_hrv.bpm if has_hrv else None
-    sdnn = latest_hrv.sdnn if has_hrv else None
+    if not all_sensors:
+        recommendations = ["Complete all three tests to get cognitive state."]
+    elif final_score and final_score >= 70:
+        recommendations = ["You are focused. Keep going!", "Take regular breaks."]
+    elif final_score and final_score >= 50:
+        recommendations = ["Stay focused - take short breaks if needed.", "Adjust posture."]
+    elif final_score:
+        recommendations = ["Take a 5-10 minute break.", "Drink water and stretch."]
+    else:
+        recommendations = ["No data available."]
     
     return JsonResponse({
-        'monitoring_status': monitoring_status.get('status', 'stopped'),
-        'eye_score': int(eye_score) if eye_score is not None else None,
-        'eye_state': eye_state if eye_state else None,
-        'eye_drift': eye_drift,
-        'blink_rate': float(blink_rate) if blink_rate is not None else None,
-        'hrv_score': int(hrv_score) if hrv_score is not None else None,
-        'hrv_state': hrv_state if hrv_state else None,
-        'hrv_drift': hrv_drift,
-        'bpm': float(bpm) if bpm is not None else None,
-        'sdnn': float(sdnn) if sdnn is not None else None,
-        'reaction_score': int(reaction_score) if reaction_score is not None else None,
-        'reaction_state': reaction_state if reaction_state else None,
-        'reaction_drift': reaction_drift,
-        'final_score': int(final_score) if final_score is not None else None,
+        'final_score': int(final_score) if final_score else None,
         'cognitive_state': cognitive_state,
         'confidence': confidence,
-        'reaction_required': reaction_required,
-        'recommendation': recommendation,
+        'reaction_score': int(reaction_score) if reaction_score else None,
+        'eye_score': int(eye_score) if eye_score else None,
+        'hrv_score': int(hrv_score) if hrv_score else None,
+        'eye_state': eye_state,
+        'hrv_state': hrv_state,
+        'recommendations': recommendations,
+        'monitoring_status': monitoring_status.get('status', 'stopped'),
+        'has_data': has_reaction or has_eye or has_hrv,
+        'missing_sensors': [
+            ('Reaction' if not has_reaction else None),
+            ('Eye' if not has_eye else None),
+            ('HRV' if not has_hrv else None),
+        ],
     })
